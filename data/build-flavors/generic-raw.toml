@@ -1,0 +1,16 @@
+# Generic raw disk image (GPT + FAT32 ESP + GRUB + ext4 root), for boards
+# without BIOS/El-Torito CD boot support - e.g. single-board computers like
+# the Turris Mox, whose U-Boot only scans GPT/MBR partition tables for a FAT
+# ESP (UEFI "distro boot"), the same way it works for Debian/Armbian SD-card
+# images. The plain "generic" flavor only produces an ISO9660 image with an
+# El-Torito boot catalog and NO partition table at all - dd'ing that to an SD
+# card gives U-Boot nothing to find, since El-Torito is a BIOS/CD-ROM-only
+# boot mechanism.
+#
+# Build with:
+#   ./build-vyos-image --architecture arm64 --build-by <you> generic-raw
+#
+# Output: build/vyos-<version>-generic-raw-arm64.raw - write this file
+# (not the .iso) directly to the SD card with dd.
+
+image_format = ["iso", "raw"]
