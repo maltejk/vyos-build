@@ -306,11 +306,45 @@ Vollständig getestet auf einem echten Turris Mox (Board-Version 22, SD-only,
   läuft der komplette Boot inklusive Config-Commit fehlerfrei durch, keine
   offenen Fehlermeldungen mehr.
 
+## Peripherie-Checks (auf diesem konkreten Board)
+
+- **Watchdog**: `/dev/watchdog0` vorhanden, Identity "Armada 37xx Watchdog",
+  120s Timeout, Status korrekt "inactive" (per `wdctl` nur ausgelesen, nicht
+  scharf geschaltet, um keinen ungewollten Reset auszulösen).
+- **USB3**: `xhci-hcd d0058000.usb: Host supports USB 3.0 SuperSpeed`,
+  Controller sauber initialisiert, zwei xHCI-Busse (USB2+USB3) registriert.
+  Kein Gerät zum Durchsatztest angeschlossen gewesen.
+- **SFP / SATA-Modul / Mini-PCIe**: auf diesem Board **nicht verbaut** — U-Boots
+  `printenv` listet nur `1: Peridot Switch Module (8-port)` in der
+  Modul-Topologie, `dmesg` zeigt keine sfp/ahci-Probe-Versuche, `lspci`/
+  `/sys/bus/pci/devices/` sind leer (Aardvark-PCIe-Node bleibt inaktiv ohne
+  erkanntes Modul, analog zum SFP-Verhalten im DTS). Treiber sind aktiv,
+  aber an diesem Exemplar nichts zum Testen vorhanden.
+
+## Firmware-Update-Versuch (U-Boot 2018.11 → 2022.07)
+
+Nutzer hat eigenständig Mox' komplette Firmware aktualisiert (TF-A BL1/BL2/BL31
+v2.7, Secure Firmware 2022.06.11, **U-Boot 2022.07**, statt der originalen
+2018.11-Werksversion). Ergebnis beim erneuten Test des GRUB-EFI-Pfads
+(`extlinux.conf` temporär deaktiviert, um den EFI-Fallback zu erzwingen):
+
+- Der ursprüngliche Crash (`FIRMWARE BUG: efi_loaded_image_t::image_base has
+  bogus value`, teils mit CPU-Exception) **tritt nicht mehr auf** — GRUB lädt
+  und zeigt sein Boot-Menü sauber an.
+- Der Kernel-Start danach hängt aber weiterhin **lautlos** (kein Login, keine
+  DHCP-Anfrage im Netzwerk beobachtet) — vermutlich weil GRUBs generierte
+  Kernel-Zeile `console=ttyAMA0` verwendet (VyOS' genereller arm64-Default,
+  siehe oben), nicht `ttyMV0`, wodurch selbst ein erfolgreich bootender Kernel
+  keine sichtbare Ausgabe hätte. Nicht abschließend verifiziert, ob der Kernel
+  dahinter tatsächlich läuft.
+- **Fazit: extlinux bleibt der verifiziert funktionierende Weg.** Das
+  Firmware-Update verbessert den EFI-Pfad sichtbar, macht ihn aber (noch)
+  nicht zuverlässig nutzbar — würde zusätzlich einen GRUB-Konsolen-Fix
+  brauchen (analog zum `ttyMV0`-Fix in `config.boot`, nur für GRUBs eigene
+  Boot-Menü-Konfiguration statt `config.boot`).
+
 ## Bekannte Risiken / offen
 
-- USB3, SATA-Modul, SFP-Modul, Watchdog-Device (`/dev/watchdog*`) und
-  Mini-PCIe sind noch nicht einzeln durchgetestet — Treiber sind aktiv,
-  aber ungetestet mangels angeschlossener Peripherie beim Test.
 - Debian-Wiki nennt bekannte MMC/USB3-Aussetzer nach dem Boot auf Mox bei
   ihrem (anderen) Installer-Kernel — bisher bei unserem Test nicht
   aufgetreten, aber Langzeitbetrieb noch nicht beobachtet.
