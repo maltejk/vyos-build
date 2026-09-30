@@ -1,10 +1,16 @@
 # VyOS rolling auf Turris Mox
 
+**Status: erfolgreich auf echter Hardware gebootet und per SSH verbunden**
+(siehe Abschnitt "Auf echter Hardware verifiziert" unten).
+
 Turris Mox (Marvell Armada 3720, dual Cortex-A53) ist kein offiziell
 unterstütztes VyOS-Board. VyOS baut aber ein generisches arm64-Image
 (`generic` flavor), das auf jeder Plattform läuft, deren Treiber im Kernel
 aktiv sind. Armada-3720-Support war im VyOS-Kernel-Defconfig nur teilweise
 aktiv — gefixt in `scripts/package-build/linux-kernel/config/arm64/vyos_defconfig`.
+Zusätzlich brauchte es einen alternativen Bootpfad (extlinux statt GRUB-EFI),
+weil Mox' Werks-U-Boot zu alt für den arm64-Kernel-EFI-Stub ist — Details
+weiter unten.
 
 ## Was gefixt wurde (Kernel-Config)
 
@@ -133,53 +139,170 @@ SD-Karte muss mindestens 10 GB haben (`disk_size`-Default in
 schreibt die komplette Datei unabhängig von der tatsächlich belegten
 Root-Partition.
 
-**Möglicher Quirk, falls GRUB nicht durchbootet:** das Debian-Wiki nennt für
-den (anderen, extlinux-basierten) Debian-Netboot-Installer einen Namens-Quirk
-— Mox' Stock-U-Boot sucht dort das Device-Tree unter `mvebu-turris_mox.dtb`
-statt dem Upstream-Namen `marvell/armada-3720-turris-mox.dtb`. Das betrifft
-den extlinux-Bootpfad, bei dem der Bootloader die DTB-Datei explizit per
-Namen lädt. Unser `.raw`-Image nutzt echtes GRUB-EFI (U-Boots EFI-Personality
-reicht ihr eigenes, einkompiliertes Device-Tree über die EFI-Config-Table an
-GRUB/Kernel durch, ganz ohne DTB-Datei in der ESP) — der Quirk sollte hier
-also gar nicht greifen. Falls GRUB auf echter Hardware trotzdem hängen
-bleibt, als Erstes hier ansetzen: ESP mounten und prüfen, ob U-Boot
-überhaupt ein Device-Tree findet/lädt (Serial-Konsole beobachten, siehe
-unten).
+**Wichtig: `build-vyos-image` allein reicht nicht.** Das oben beschriebene
+`extlinux.conf` + entpackte `vmlinuz` + SPI-NOR-DTB + `hw-id` sind KEIN
+Teil des normalen Build-Prozesses — die ESP/Root-Partition des `.raw` muss
+danach manuell (oder per Skript) gepatcht werden, bevor es aufs Board passt:
 
-Boot-Reihenfolge auf Mox über DIP-Schalter/Boot-Select (SD vs. eMMC vs. USB)
-— siehe [docs.turris.cz/hw/mox/microsd](https://docs.turris.cz/hw/mox/microsd/).
+```bash
+# .raw loop-mounten
+sudo losetup -fP --show build/vyos-<version>-generic-raw-arm64.raw   # -> /dev/loopN
+sudo mount /dev/loopNp2 /mnt/esp    # FAT32-ESP
+sudo mount /dev/loopNp3 /mnt/root   # ext4-Root
+
+# vmlinuz entpacken + Dateien auf die ESP kopieren
+gunzip -c /mnt/root/boot/<version>/vmlinuz > /tmp/vmlinuz.raw
+sudo mkdir -p /mnt/esp/extlinux
+sudo cp /tmp/vmlinuz.raw /mnt/esp/extlinux/vmlinuz
+sudo cp /mnt/root/boot/<version>/initrd.img /mnt/esp/extlinux/initrd.img
+sudo cp spi-nor-mox.dtb /mnt/esp/extlinux/spi-nor-mox.dtb   # s.o., einmalig per Serial-Konsole extrahiert
+# extlinux.conf schreiben (Inhalt s.o.)
+
+# config.boot patchen: eth0 hw-id + console device ttyMV0 (Inhalt s.o.)
+sudo sed -i 's/device ttyAMA0 {/device ttyMV0 {/' /mnt/root/boot/<version>/rw/opt/vyatta/etc/config/config.boot
+
+sudo umount /mnt/esp /mnt/root
+sudo losetup -d /dev/loopN
+```
+
+Das SPI-NOR-DTB ist Board-Revisions-abhängig (enthält u.a. die
+Modul-Topologie) — einmal pro Board-Exemplar per Serial-Konsole extrahieren
+(siehe oben), dann für alle folgenden Image-Builds desselben Boards
+wiederverwenden.
+
+**GRUB-EFI bootet auf echter Hardware NICHT — bestätigt per Serial-Konsole.**
+Mox' Werks-U-Boot ist uralt (`U-Boot 2018.11`, `jenkins-turris-os-packages-kittens-mox-90`,
+aus dem SPI-Flash). Dessen EFI_LOADER hat einen bekannten Bug beim Chainloaden
+von GRUB→Kernel: der arm64-Kernel-EFI-Stub bricht mit
+```
+EFI stub: ERROR: FIRMWARE BUG: efi_loaded_image_t::image_base has bogus value
+EFI stub: ERROR: FIRMWARE BUG: kernel image not aligned on 64k boundary
+EFI stub: ERROR: Unable to construct new device tree.
+Failed to boot both default and fallback entries.
+```
+ab — U-Boot meldet dem Kernel eine falsche Bildadresse, der Kernel verweigert
+aus Sicherheitsgründen den Start. Einmal führte das sogar zu einem echten
+CPU-Exception-Crash (`"Synchronous Abort" handler`) statt eines sauberen
+Fehlers. Das ist **kein Bug in unserem Image** — reines Firmware-Alter.
+
+**Funktionierender Bootpfad: extlinux (direktes `booti`, kein EFI).**
+Mox' `distro_bootcmd` prüft laut `printenv` in `scan_dev_for_boot` erst
+`extlinux/extlinux.conf`, dann EFI erst als Fallback — genau das nutzen wir,
+um den kaputten EFI-Pfad komplett zu umgehen (matches Debians eigene
+funktionierende Methode für dieses Board). Drei zusätzliche Fixes waren
+nötig, jeweils per Serial-Konsole live am Gerät gefunden:
+
+1. **`vmlinuz` muss unkomprimiert sein.** VyOS' `.deb`-Paket liefert ein
+   gzip-komprimiertes `vmlinuz` (`booti` erkennt das nicht — `Bad Linux
+   ARM64 Image magic!`). Fix: `gunzip -c vmlinuz > vmlinuz.raw`, das
+   entpackte File verwenden (echtes `arch/arm64/boot/Image`).
+2. **DTB muss aus dem SPI-NOR-Flash kommen, nicht vom Kernel-Paket.**
+   Mox' altes U-Boot patcht beim Booten board-spezifische Werte
+   (Modul-Topologie, ECDSA-Key, Board-Version) in ein mitgeliefertes
+   Device-Tree hinein (`ft_board_setup()`, läuft bei **jedem** Boot über
+   `bootm`/`booti`, nicht nur bei EFI). Das moderne Mainline-DTB aus dem
+   6.18.50-Kernel hat andere Node-Pfade als dieses alte U-Boot erwartet →
+   `ERROR: board-specific fdt fixup failed: FDT_ERR_NOTFOUND` → Hard-Hang
+   ("must RESET the board to recover"). U-Boots eigener Bootscript lädt
+   beim normalen Boot selbst ein kompatibles DTB aus SPI-NOR
+   (`sf read $fdt_addr_r 0x7f0000 0x10000`, sichtbar in `mox_distro_bootcmd`)
+   — genau das brauchen wir auch für unseren extlinux-Eintrag.
+
+   Extraktion (kein serielles Custom-Tool nötig, nur Standard-U-Boot-Befehle;
+   `tftpput` scheitert an vielen TFTP-Servern wie dnsmasq, die nur Lesen
+   können — deshalb per Hex-Dump über die Konsole):
+   ```
+   => sf probe; sf read 0x4f00000 0x7f0000 0x10000
+   => fdt addr 0x4f00000
+   => fdt header          # totalsize ablesen, hier 0x4b5c (19292 Bytes)
+   => md.b 0x4f00000 0x4b5c
+   ```
+   Den `md.b`-Hex-Dump aus dem Serial-Log parsen (Format
+   `<addr>: <16 Hex-Bytes>  <ASCII>`) und als Binärdatei rekonstruieren —
+   ergibt ein valides, mit `dtc` dekompilierbares DTB, das schon die
+   richtigen Switch-Chip-Nodes für das verbaute Modul enthält (z.B.
+   `switch0@2`/`switch1@2`/`switch2@2` für ein 8-Port-Peridot-Modul).
+3. **`eth0` braucht eine explizite `hw-id`** in `config.boot`, sonst hängt
+   die VyOS-Config-Aktivierung beim Boot fest ("interface 'eth0' still has
+   no hw-id configured ... failed!", danach kein Fortschritt mehr, auch
+   nicht auf Enter am Serial). Die echte MAC steht in U-Boots `printenv`
+   als `ethaddr`:
+   ```
+   interfaces {
+       ethernet eth0 {
+           hw-id "d8:58:d7:00:ce:ee"
+           address dhcp
+       }
+   }
+   ```
+
+**Finales, funktionierendes `extlinux.conf`** (liegt auf der ESP-Partition,
+`/extlinux/extlinux.conf`, referenziert Dateien relativ zur selben Partition):
+```
+DEFAULT VyOS
+LABEL VyOS
+    KERNEL /extlinux/vmlinuz
+    FDT /extlinux/spi-nor-mox.dtb
+    INITRD /extlinux/initrd.img
+    APPEND boot=live rootdelay=5 noautologin net.ifnames=0 biosdevname=0 vyos-union=/boot/<version> console=ttyMV0,115200 earlycon=ar3700_uart,0xd0012000
+```
+(`vmlinuz` = entpackt, siehe Punkt 1; `spi-nor-mox.dtb` = aus SPI-NOR
+extrahiert, siehe Punkt 2; `console=ttyMV0` statt `ttyAMA0`, siehe unten.)
+
+**Serial-Konsole ist `ttyMV0`, nicht `ttyAMA0`.** `data/architectures/arm64.toml`
+setzt `console_type = "ttyAMA"` als generischen arm64-Default (passt z.B. für
+QEMU/Raspberry Pi mit PL011-UART) — Armada 3720 hat aber einen eigenen
+Marvell-UART-Treiber (`CONFIG_SERIAL_MVEBU_UART`, Device-Node `ttyMV0`).
+Bestätigt aus U-Boots eigenem `rescue_args=console=ttyMV0,115200
+earlycon=ar3700_uart,0xd0012000`. Fix in `config.boot`:
+```
+system {
+    console {
+        device ttyMV0 {
+            kernel
+            speed "115200"
+        }
+    }
+}
+```
+
+Boot-Reihenfolge: kein physischer DIP-Schalter nötig — Mox (SD-only-Variante,
+ohne eMMC) bootet laut Turris-Doku ohnehin primär von der microSD-Karte.
 Serial-Konsole zum Debuggen: [docs.turris.cz/hw/mox/serial-boot](https://docs.turris.cz/hw/mox/serial-boot/)
-(115200 8N1, jetzt mit `CONFIG_SERIAL_MVEBU_UART=y` auch im VyOS-Kernel aktiv).
+(115200 8N1).
 
-## Was getestet ist (QEMU, kein echtes Mox-Board verfügbar)
+## Auf echter Hardware verifiziert (nicht nur QEMU)
 
-Gebaut und geprüft auf einem nativen aarch64-Build-Host (kein x86/QEMU-User-Emulation):
+Vollständig getestet auf einem echten Turris Mox (Board-Version 22, SD-only,
+8-Port-Peridot-Switch-Modul verbaut) über eine USB-Serial-Konsole:
 
-- Kernel-`.deb` gebaut, Config aus dem `.deb` extrahiert und verifiziert:
-  `CONFIG_MVNETA`, `CONFIG_MOXTET`, `CONFIG_NET_DSA`, `CONFIG_NET_DSA_MV88E6XXX`,
-  `CONFIG_SPI_ARMADA_3700`, `CONFIG_SERIAL_MVEBU_UART` alle korrekt gesetzt.
-- `generic-raw`-Image gebaut, eigenes Kernel-Paket bestätigt eingebunden
-  (nicht der Stock-Kernel von packages.vyos.net).
-- `.raw`-Datei mit `gdisk -l` geprüft: echtes GPT, FAT32-ESP (Typ EF00),
-  ext4-Root (Typ 8300).
-- In QEMU (`qemu-system-aarch64`, `-cpu max`, UEFI-Firmware `AAVMF`/`QEMU_EFI.fd`,
-  **ohne KVM**, Softwareemulation) als echtes virtio-Block-Device (nicht
-  CD-ROM) gebootet: GRUB-EFI → Kernel → systemd → VyOS-Router-Service →
-  Config-Migration → Login-Prompt, alles erfolgreich durchgelaufen
-  ("Configuration success").
-
-Das bestätigt: Kernel + GRUB-EFI-Bootkette funktionieren generisch unter
-UEFI. Was QEMU **nicht** prüfen kann, weil es keine Armada-3720-Hardware
-emuliert: mvneta-NIC, Moxtet-Bus, LAN-Switch-Modul, SPI-Flash, eMMC/SD-Host —
-das bleibt dem echten Board vorbehalten.
+- U-Boot bootet SPI-Flash → findet SD-Karte → lädt `extlinux/extlinux.conf`
+  → `booti` mit entpacktem `vmlinuz` + SPI-NOR-DTB → Kernel bootet vollständig
+  durch bis zum systemd-Multi-User-Target und VyOS-Router-Service.
+- `dmesg` bestätigt alle gepatchten Treiber laufen real:
+  `mvneta d0030000.ethernet e2: renamed from eth0` und
+  `mvneta d0040000.ethernet e3: renamed from eth1` (beide Onboard-NICs),
+  `moxtet spi0.1` geladen, `mv88e6085 d0032004.mdio-mii:10: switch 0x1900
+  detected: Marvell 88E6190` (LAN-Switch-Modul erkannt).
+- Per SSH auf die laufende Instanz verbunden (`vyos`/Standard-Passwort):
+  `show version` bestätigt `VyOS 1.5-rolling-... generic-raw ... built by
+  maltejk@gmail.com`; `ip -br a` zeigt `eth0` mit per DHCP bezogener IP
+  sowie **alle 8 Switch-Ports als eigene Interfaces**
+  (`eth1@eth9` … `eth8@eth9`) — Moxtet + DSA/mv88e6xxx-Kette komplett
+  funktionsfähig.
+- Kleine, augenscheinlich harmlose Meldung bleibt offen: `vyos-config:
+  Configuration error` erscheint beim Boot trotz allem oben Genannten;
+  Login/SSH/Netzwerk funktionieren davon unbeeinflusst. Ursache noch nicht
+  tief untersucht (evtl. minimales `config.boot` fehlt ein Default-Wert,
+  den die aktuelle `vyos-1x`-Version erwartet).
 
 ## Bekannte Risiken / offen
 
-- Debian-Wiki nennt bekannte MMC/USB3-Aussetzer nach dem Boot auf Mox
-  (Ursache ungeklärt, betraf dort den extlinux-basierten Installer-Kernel
-  nicht) — im Auge behalten, ob das auch mit diesem Kernel auftritt.
-- Kein Zugriff auf physisches Mox-Board — Kernel-Config und Image-Format sind
-  jetzt beide verifiziert (Kconfig-Symbole passen zu Mox' DTB, `.raw`-Image
-  bootet nachweislich als Block-Device via GRUB-EFI), aber die
-  Mox-spezifische Hardware selbst (s.o.) ist ungetestet. Bitte nach Flash
-  Ethernet, LAN-Modul (falls vorhanden), USB3 und Watchdog verifizieren.
+- Die exakte Ursache der harmlosen `Configuration error`-Meldung beim Boot
+  ist nicht geklärt (Netzwerk/SSH funktionieren trotzdem einwandfrei).
+- USB3, SATA-Modul, SFP-Modul, Watchdog-Device (`/dev/watchdog*`) und
+  Mini-PCIe sind noch nicht einzeln durchgetestet — Treiber sind aktiv,
+  aber ungetestet mangels angeschlossener Peripherie beim Test.
+- Debian-Wiki nennt bekannte MMC/USB3-Aussetzer nach dem Boot auf Mox bei
+  ihrem (anderen) Installer-Kernel — bisher bei unserem Test nicht
+  aufgetreten, aber Langzeitbetrieb noch nicht beobachtet.
