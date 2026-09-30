@@ -343,6 +343,60 @@ v2.7, Secure Firmware 2022.06.11, **U-Boot 2022.07**, statt der originalen
   brauchen (analog zum `ttyMV0`-Fix in `config.boot`, nur für GRUBs eigene
   Boot-Menü-Konfiguration statt `config.boot`).
 
+Mit `extlinux` + `booti` (unser eigentlicher Weg) bringt das Update dagegen
+zwei echte Verbesserungen:
+
+- **Modernes Mainline-DTB funktioniert jetzt direkt** — kein
+  `FDT_ERR_NOTFOUND` mehr, das Board-Fixup des neuen U-Boot akzeptiert die
+  Node-Struktur des 6.18.50-Kernel-DTB. Die SPI-NOR-DTB-Extraktion (Punkt 2
+  oben) ist mit aktualisierter Firmware **nicht mehr nötig** — bleibt aber
+  Pflicht für alle, die auf der originalen 2018.11-Werksfirmware bleiben.
+- **DHCP/Netzwerk-Stack ist deutlich robuster** — PXE-Boot-Versuche mit dem
+  alten U-Boot brauchten dutzende BOOTP-Retries und scheiterten meist ganz
+  (0 von 40 automatisierten Versuchen erfolgreich); mit 2022.07 bindet DHCP
+  zuverlässig innerhalb von ~250ms.
+
+## PXE/Netzwerk-Boot — funktioniert nur teilweise, zwei getrennte Probleme gefunden
+
+Test: SD-Karte entfernt, dnsmasq (DHCP+TFTP) auf dem direkt verbundenen
+Build-Host, `boot_targets=mmc0 usb0 pxe dhcp` fällt ohne SD-Karte automatisch
+auf `pxe` durch.
+
+1. **Watchdog-Reboot-Loop.** Das neue U-Boot startet beim Booten automatisch
+   einen Hardware-Watchdog mit 60s Timeout (`WDT: Started watchdog@8300 with
+   servicing (60s timeout)`, noch vor dem Laden der Umgebung aus SPI-Flash —
+   also fest im Board-Init-Code, nicht per Env-Variable abschaltbar). Über
+   den langsamen Test-USB-Ethernet-Dongle (~2 MiB/s) dauert allein der
+   Transfer von initrd (31 MB) + vmlinuz (34 MB) + Kernel-Boot spürbar länger
+   als 60s, ohne dass in der Zeit irgendetwas den Watchdog bedient — Reset
+   mitten im Boot, endlos wiederholt. **Live am Gerät verifiziert:**
+   `wdt dev watchdog@8300` gefolgt von `wdt stop` an der U-Boot-Konsole (vor
+   dem eigentlichen Boot-Befehl) verhindert den Reset zuverlässig — das Board
+   bleibt danach stabil stehen, auch wenn der nachfolgende Boot selbst
+   fehlschlägt (siehe Punkt 2). Nicht dauerhaft in die Firmware übernommen
+   (`saveenv` verändert das gespeicherte U-Boot-Environment im SPI-NOR
+   permanent) — wer das reproduzierbar braucht, müsste `wdt stop` vorn in
+   die `bootcmd`/`mox_boot`-Kette einbauen und speichern. Auf echtem
+   Gigabit-LAN dürfte der Transfer schnell genug sein, dass dieses Problem
+   gar nicht erst auftritt.
+2. **Kein Root-Dateisystem über PXE bereitgestellt.** Selbst wenn Punkt 1
+   behoben ist, scheitert der Boot mit
+   ```
+   BOOT FAILED! Unable to find a medium containing a live file system
+   ```
+   — live-boot droppt in eine BusyBox-Rescue-Shell. Grund: unsere
+   `extlinux.conf`/`pxelinux.cfg` lädt nur `vmlinuz`+`initrd`+DTB per TFTP,
+   nicht die eigentliche Root-Dateisystem-Squashfs (~450 MB,
+   `<version>.squashfs`), die beim SD-Karten-Boot lokal auf der Karte liegt.
+   Für echtes Netzwerk-Booten fehlt noch live-boots `fetch=`-Mechanismus
+   (Squashfs per HTTP/TFTP-URL nachladen) oder ein NFS-Root-Setup — beides
+   nicht umgesetzt, da PXE/LAN-Boot nicht der primäre Zielweg ist.
+
+**Fazit:** PXE/LAN-Boot ist mit aktualisierter Firmware technisch näher an
+funktionsfähig (Netzwerk-Stack + DTB-Kompatibilität beide gelöst), aber ohne
+zusätzliche live-boot-Netboot-Konfiguration (Squashfs-Fetch) nicht
+einsatzbereit. SD-Karte bleibt der vollständig verifizierte, empfohlene Weg.
+
 ## Bekannte Risiken / offen
 
 - Debian-Wiki nennt bekannte MMC/USB3-Aussetzer nach dem Boot auf Mox bei
