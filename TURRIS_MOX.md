@@ -1,6 +1,7 @@
 # VyOS rolling auf Turris Mox
 
-**Status: erfolgreich auf echter Hardware gebootet und per SSH verbunden**
+**Status: vollständig funktionsfähig auf echter Hardware** — sauberer Boot,
+`Configuration success`, Ethernet + 8-Port-LAN-Switch-Modul + SSH bestätigt
 (siehe Abschnitt "Auf echter Hardware verifiziert" unten).
 
 Turris Mox (Marvell Armada 3720, dual Cortex-A53) ist kein offiziell
@@ -236,6 +237,23 @@ nötig, jeweils per Serial-Konsole live am Gerät gefunden:
    }
    ```
 
+4. **`system console device ttyMV0` in `config.boot` lässt den kompletten
+   Config-Commit fehlschlagen** ("Configuration error"). VyOS-1x' Schema für
+   `system console device <name>` akzeptiert nur eine feste Liste bekannter
+   Namensmuster (`ttyS*`, `ttyUSB*`, `ttyAMA*`, `hvc*`, …) — `ttyMV0`
+   (Marvell-UART) ist dort nicht vorgesehen → `[ system console device
+   ttyMV0 ] Invalid value` → `[[system console]] failed`. Die
+   Priority-Queue verarbeitet trotzdem alle anderen Knoten (deshalb
+   funktionierten Netzwerk/SSH schon vorher trotz der Fehlermeldung), aber
+   der Gesamtstatus wird als Fehler markiert. **Fix: den `console`-Block
+   aus `config.boot` komplett weglassen** — die serielle Konsole
+   funktioniert trotzdem, weil `Serial Getty on ttyMV0` unabhängig davon
+   direkt aus dem Kernel-`console=`-Bootparameter kommt, nicht aus VyOS'
+   eigenem Config-Schema. (Root Cause gefunden per `vyos-config-debug`
+   Kernel-Bootparameter, der `/tmp/boot-config-trace` mit dem echten
+   Python-Traceback erzeugt — ohne dieses Flag zeigt `vyos-boot-config-loader.py`
+   nur die nichtssagende "Configuration error"-Zeile.)
+
 **Finales, funktionierendes `extlinux.conf`** (liegt auf der ESP-Partition,
 `/extlinux/extlinux.conf`, referenziert Dateien relativ zur selben Partition):
 ```
@@ -247,24 +265,18 @@ LABEL VyOS
     APPEND boot=live rootdelay=5 noautologin net.ifnames=0 biosdevname=0 vyos-union=/boot/<version> console=ttyMV0,115200 earlycon=ar3700_uart,0xd0012000
 ```
 (`vmlinuz` = entpackt, siehe Punkt 1; `spi-nor-mox.dtb` = aus SPI-NOR
-extrahiert, siehe Punkt 2; `console=ttyMV0` statt `ttyAMA0`, siehe unten.)
+extrahiert, siehe Punkt 2; `console=ttyMV0` statt `ttyAMA0`, siehe unten
+— das ist der Kernel-Bootparameter, unabhängig vom `config.boot`-Schema-Problem
+aus Punkt 4.)
 
 **Serial-Konsole ist `ttyMV0`, nicht `ttyAMA0`.** `data/architectures/arm64.toml`
 setzt `console_type = "ttyAMA"` als generischen arm64-Default (passt z.B. für
 QEMU/Raspberry Pi mit PL011-UART) — Armada 3720 hat aber einen eigenen
 Marvell-UART-Treiber (`CONFIG_SERIAL_MVEBU_UART`, Device-Node `ttyMV0`).
 Bestätigt aus U-Boots eigenem `rescue_args=console=ttyMV0,115200
-earlycon=ar3700_uart,0xd0012000`. Fix in `config.boot`:
-```
-system {
-    console {
-        device ttyMV0 {
-            kernel
-            speed "115200"
-        }
-    }
-}
-```
+earlycon=ar3700_uart,0xd0012000`. Das gehört nur ins `APPEND` der
+`extlinux.conf` (Kernel-Bootparameter) — **nicht** in `config.boot`'s
+`system console`-Block, siehe Punkt 4.
 
 Boot-Reihenfolge: kein physischer DIP-Schalter nötig — Mox (SD-only-Variante,
 ohne eMMC) bootet laut Turris-Doku ohnehin primär von der microSD-Karte.
@@ -290,19 +302,22 @@ Vollständig getestet auf einem echten Turris Mox (Board-Version 22, SD-only,
   sowie **alle 8 Switch-Ports als eigene Interfaces**
   (`eth1@eth9` … `eth8@eth9`) — Moxtet + DSA/mv88e6xxx-Kette komplett
   funktionsfähig.
-- Kleine, augenscheinlich harmlose Meldung bleibt offen: `vyos-config:
-  Configuration error` erscheint beim Boot trotz allem oben Genannten;
-  Login/SSH/Netzwerk funktionieren davon unbeeinflusst. Ursache noch nicht
-  tief untersucht (evtl. minimales `config.boot` fehlt ein Default-Wert,
-  den die aktuelle `vyos-1x`-Version erwartet).
+- **`vyos-router: Configuration success`** — nach Fix Nr. 4 (Punkt oben)
+  läuft der komplette Boot inklusive Config-Commit fehlerfrei durch, keine
+  offenen Fehlermeldungen mehr.
 
 ## Bekannte Risiken / offen
 
-- Die exakte Ursache der harmlosen `Configuration error`-Meldung beim Boot
-  ist nicht geklärt (Netzwerk/SSH funktionieren trotzdem einwandfrei).
 - USB3, SATA-Modul, SFP-Modul, Watchdog-Device (`/dev/watchdog*`) und
   Mini-PCIe sind noch nicht einzeln durchgetestet — Treiber sind aktiv,
   aber ungetestet mangels angeschlossener Peripherie beim Test.
 - Debian-Wiki nennt bekannte MMC/USB3-Aussetzer nach dem Boot auf Mox bei
   ihrem (anderen) Installer-Kernel — bisher bei unserem Test nicht
   aufgetreten, aber Langzeitbetrieb noch nicht beobachtet.
+- Systemzeit ist beim ersten Boot falsch (keine RTC, kein NTP-Sync direkt
+  am Anfang) — führt zu harmlosen, aber zahlreichen PAM-Warnungen
+  ("account root has password changed in future") im Log. NTP ist
+  konfiguriert und sollte das nach kurzer Zeit selbst korrigieren.
+- Kein `vyos-1x`-Upstream-Bugreport für das `ttyMV0`-Schema-Problem (Punkt 4
+  oben) erstellt — wäre der sauberere Fix, falls jemand Board-übergreifend
+  an VyOS/Mox-Support arbeiten will.
