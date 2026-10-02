@@ -59,7 +59,7 @@ nicht. Das ISO auf eine SD-Karte gedd't, hat U-Boot schlicht nichts zum
 Booten. (Genau das beschreibt auch das Debian-Wiki: "The standard ISO
 installation method is not compatible" für Mox.)
 
-Fix: neue Build-Flavor `data/build-flavors/generic-raw.toml`
+Fix: neue Build-Flavor `data/build-flavors/generic-sbc.toml`
 mit `image_format = ["iso", "raw"]`. Das nutzt VyOS' vorhandene
 `raw_image.create_raw_image()`-Pipeline (dieselbe wie für Cloud-Images) und
 erzeugt zusätzlich eine `.raw`-Datei mit echtem GPT: BIOS-Boot-Partition
@@ -112,16 +112,22 @@ cp scripts/package-build/linux-kernel/linux-image-6.18.50-vyos_6.18.50-1_arm64.d
    packages/
 ```
 
-Dann das eigentliche Image bauen — **`generic-raw`, nicht `generic`**
+Dann das eigentliche Image bauen — **`generic-sbc`, nicht `generic`**
 (siehe Abschnitt oben, warum):
 
 ```bash
-sudo ./build-vyos-image --architecture arm64 --build-by "maltejk@gmail.com" generic-raw
+sudo ./build-vyos-image --architecture arm64 --build-by "maltejk@gmail.com" generic-sbc
 ```
 
-Ergebnis: `build/vyos-<version>-generic-raw-arm64.raw` (und zusätzlich das
-`.iso`, aber das ist nur ein Zwischenschritt für den Rohimage-Bau, nicht
-zum Flashen gedacht). Verifizieren, dass das eigene Kernel-Paket gewonnen
+Ergebnis (Flavor `generic-sbc`, Zusatz-Artefakte `.cdx.json`/`.spdx.json` ignoriert):
+
+- `build/vyos-<version>-generic-sbc-arm64.raw` — Plattenimage (GPT, ESP + Root),
+  mit `dd` auf die SD-Karte schreiben (siehe unten). Nur für die Erstinstallation.
+- `build/vyos-<version>-generic-sbc-arm64.iso` — echtes ISO9660-Installationsimage,
+  für Updates auf dem laufenden Mox per `add system image <url>` (siehe
+  "Image-Updates auf dem Mox").
+
+Verifizieren, dass das eigene Kernel-Paket gewonnen
 hat — im Build-Log muss `Get: ... file:/root/packages ./ linux-image-...`
 stehen, nicht ein Download von `packages.vyos.net`.
 
@@ -132,7 +138,7 @@ nötig für normalen OS-Betrieb (nur für Factory-Reset/Recovery relevant, siehe
 [docs.turris.cz/hw/mox/rescue-modes](https://docs.turris.cz/hw/mox/rescue-modes/)).
 
 ```bash
-sudo dd if=build/vyos-<version>-generic-raw-arm64.raw of=/dev/sdX bs=4M status=progress conv=fsync
+sudo dd if=build/vyos-<version>-generic-sbc-arm64.raw of=/dev/sdX bs=4M status=progress conv=fsync
 ```
 
 SD-Karte muss mindestens 10 GB haben (`disk_size`-Default in
@@ -147,7 +153,7 @@ danach manuell (oder per Skript) gepatcht werden, bevor es aufs Board passt:
 
 ```bash
 # .raw loop-mounten
-sudo losetup -fP --show build/vyos-<version>-generic-raw-arm64.raw   # -> /dev/loopN
+sudo losetup -fP --show build/vyos-<version>-generic-sbc-arm64.raw   # -> /dev/loopN
 sudo mount /dev/loopNp2 /mnt/esp    # FAT32-ESP
 sudo mount /dev/loopNp3 /mnt/root   # ext4-Root
 
@@ -537,7 +543,7 @@ zwei Dinge stimmen:
    aber nicht die ESP.
 
 Beides erledigt das mitgelieferte Skript `/usr/local/sbin/mox-sync-boot`
-(Flavor `generic-raw`, nicht ausführbar, daher mit `bash` aufrufen):
+(Flavor `generic-sbc`, nicht ausführbar, daher mit `bash` aufrufen):
 
 ```bash
 sudo bash /usr/local/sbin/mox-sync-boot -n   # Trockenlauf

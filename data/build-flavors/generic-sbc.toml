@@ -8,10 +8,13 @@
 # boot mechanism.
 #
 # Build with:
-#   ./build-vyos-image --architecture arm64 --build-by <you> generic-raw
+#   ./build-vyos-image --architecture arm64 --build-by <you> generic-sbc
 #
-# Output: build/vyos-<version>-generic-raw-arm64.raw - write this file
-# (not the .iso) directly to the SD card with dd.
+# Output:
+#   build/vyos-<version>-generic-sbc-arm64.raw - disk image, write it directly
+#     to the SD card with dd (first installation)
+#   build/vyos-<version>-generic-sbc-arm64.iso - ISO9660 installer image, use it
+#     for updates of a running system ("add system image <url>"), not for dd
 
 image_format = ["iso", "raw"]
 
