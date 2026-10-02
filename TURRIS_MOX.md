@@ -321,6 +321,58 @@ Vollständig getestet auf einem echten Turris Mox (Board-Version 22, SD-only,
   erkanntes Modul, analog zum SFP-Verhalten im DTS). Treiber sind aktiv,
   aber an diesem Exemplar nichts zum Testen vorhanden.
 
+## Switch-Port-Nummerierung (8-Port-Peridot-Modul)
+
+Produktiv-Config (Stand 2026-10-01): jeder der 8 Switch-Ports läuft als
+eigenständiges, isoliertes Layer-2/3-Interface mit eigenem `/24` —
+**keine** Bridge zwischen den Ports. Per `arping`+`tcpdump`-Test
+nachweislich kein Cross-Talk zwischen beliebigen Portpaaren, auch nicht
+über ein physisches Loop-Kabel (siehe technische Findings #13/#14).
+
+**Die `eth1`..`eth8`-Zuordnung ist jetzt garantiert stabil über Reboots
+hinweg** — zuvor hing sie von der Kernel/DSA-Registrierungsreihenfolge ab
+und konnte zwischen Boots wechseln (an einem Boot `eth1`..`eth8` mit
+Conduit `eth9`, an einem anderen `lan1`..`lan8` mit Conduit `eth1`, siehe
+Findings #10). Fix: eine udev-Regel
+(`/etc/udev/rules.d/71-mox-net-naming.rules`, liegt im persistenten
+`rw`-Overlay, überlebt Reboots) pinnt jeden Port über seinen
+**hardware-stabilen** `phys_port_name` (`p1`..`p8`, kommt direkt vom
+Switch-Chip-Register, unabhängig von Registrierungs-Timing) auf einen
+festen `ethN`-Namen, plus die beiden Onboard-mvneta-Ports über ihren
+eigenen Platform-Device-Pfad auf `eth0`/`eth9`. Verifiziert über zwei
+unabhängige Reboots: identisches Mapping beide Male (siehe technische
+Findings #15/#16).
+
+Logische Zuordnung (Interface-Name → Subnetz), jetzt dauerhaft:
+
+```
+    +-----------+-----------+-----------+-----------+
+    |   eth1    |   eth2    |   eth3    |   eth4    |
+    |    p1     |    p2     |    p3     |    p4     |
+    | .101.1/24 | .102.1/24 | .103.1/24 | .104.1/24 |
+    +-----------+-----------+-----------+-----------+
+    |   eth5    |   eth6    |   eth7    |   eth8    |
+    |    p5     |    p6     |    p7     |    p8     |
+    | .105.1/24 | .106.1/24 | .107.1/24 | .108.1/24 |
+    +-----------+-----------+-----------+-----------+
+    (alle: 192.168.10<N>.1/24, Gateway-Adresse = eigener Port;
+     "pN" = phys_port_name, der echte, von udev gepinnte Hardware-Index)
+
+    CPU/Conduit-Port (DSA-intern, nicht extern nutzbar): eth9
+    Onboard-WAN-Port (separat vom Switch-Modul):         eth0
+```
+
+**Eine Sache bleibt offen**: ob `phys_port_name` `p1`..`p8` auch mit der
+echten **Silkscreen-Beschriftung** 1..8 auf dem Peridot-Modul
+übereinstimmt (links-nach-rechts oder eine andere Reihenfolge), wurde noch
+nicht gegen die echte Hardware getestet — die 2×4-Anordnung oben ist rein
+schematisch für die Doku, keine Fotografie des echten Moduls. Das
+*Mapping selbst* (`ethN` ↔ `pN`) ist aber jetzt garantiert fest, nur die
+Zuordnung `pN` ↔ aufgedrucktem Port-Label ist noch unverifiziert. Falls das
+für den Einsatz wichtig wird: ein Kabel in den mit "1" beschrifteten Port
+stecken und prüfen, welches `ethN`/`pN` Carrier bekommt
+(`ip -br link`).
+
 ## Firmware-Update-Versuch (U-Boot 2018.11 → 2022.07)
 
 Nutzer hat eigenständig Mox' komplette Firmware aktualisiert (TF-A BL1/BL2/BL31
@@ -396,6 +448,61 @@ auf `pxe` durch.
 funktionsfähig (Netzwerk-Stack + DTB-Kompatibilität beide gelöst), aber ohne
 zusätzliche live-boot-Netboot-Konfiguration (Squashfs-Fetch) nicht
 einsatzbereit. SD-Karte bleibt der vollständig verifizierte, empfohlene Weg.
+
+## `reboot` hing — Ursache und Fix (Kernel-Patch + U-Boot-Variable)
+
+Symptom (2026-10-01): `reboot` aus VyOS fährt sauber runter, letzte Konsolen-
+zeile `reboot: Restarting system`, danach Stille, rote LED aus, nur
+Power-Cycle hilft. U-Boots eigenes `reset` funktioniert immer.
+
+**Ursache (per Messung mit zeitgestempeltem Serial-Log belegt):**
+
+1. Linux ruft beim Reboot den PSCI-`SYSTEM_RESET` auf. Das TF-A
+   (`a3700_system_reset()`) versucht zuerst `cm3_system_reset()` (Mailbox an
+   den Cortex-M3/WTMI) und schreibt danach unbedingt `MVEBU_WARM_RESET_REG`
+   — laut Quellcode-Kommentar "may hang the board" (Hardware-Bug des
+   Armada 3720). Dieser Pfad hängt hier zuverlässig, auch mit neuerer
+   Firmware (v2024.04.15) und größerem Retry-Budget — der Retry-Ansatz war
+   eine Sackgasse.
+2. Der Reboot-Notifier des Treibers `armada_37xx_wdt`
+   (`watchdog_stop_on_reboot`) stoppt vorher den Hardware-Watchdog wirklich.
+   Damit gibt es keinen Rettungsweg mehr.
+3. Ein **Watchdog-Ablauf** dagegen setzt den SoC sicher zurück: die WTMI-
+   Firmware wandelt ihn in einen sauberen Reset um (`mox_wdt_workaround()`),
+   aber **nur wenn die U-Boot-Umgebungsvariable
+   `a3720_reset_issue_workaround=yes` im SPI-NOR-Env gesetzt ist**
+   (WTMI liest sie nur beim Kaltstart).
+
+Belegt: `sysrq-b` (Watchdog bleibt scharf) erholt sich nach der Restlaufzeit
+des Watchdogs; Watchdog auf 4 s + `sysrq-b` bootet nach 4 s sauber (3/3).
+
+**Fix, zwei Teile (beide nötig):**
+
+1. U-Boot-Variable einmalig setzen (Serial-Konsole, im U-Boot-Prompt):
+
+   ```
+   setenv a3720_reset_issue_workaround yes
+   saveenv
+   ```
+
+   Danach einmal Power-Cycle (WTMI liest die Variable nur beim Kaltstart).
+   Prüfen: `printenv a3720_reset_issue_workaround`.
+
+2. Kernel-Patch
+   `scripts/package-build/linux-kernel/patches/kernel/0006-armada-37xx-wdt-restart-handler.patch`:
+   der Watchdog-Treiber bekommt einen Restart-Handler mit Priorität 200
+   (vor PSCI, Priorität 129). Er startet den Watchdog mit 1 s Timeout neu
+   und wartet bis zu 5 s auf den Reset. Hilft das nicht, greift der
+   PSCI-Handler wie bisher als Fallback.
+
+**Test:** mit dem gepatchten Modul (`armada_37xx_wdt.ko`, temporär
+geladen) kam nach `reboot` der Firmware-Banner nach ca. 1,5 s und VyOS
+war nach ca. 3 min wieder oben (1 Messung; ohne Patch hängt `reboot` ≥15 min).
+Das Modul muss genau zum laufenden Kernel passen (gleicher Compiler,
+gleiche Config, BTF) — deshalb im `vyos/vyos-build`-Container bauen.
+
+**Ohne den Kernel-Patch** (altes Image): Neustart nur per Power-Cycle, oder
+`sysrq-b` nach Setzen des Watchdog-Timeouts auf wenige Sekunden.
 
 ## Bekannte Risiken / offen
 
