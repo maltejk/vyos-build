@@ -523,6 +523,44 @@ Bei `eth1` und `eth3`..`eth9` den `hw-id`-Eintrag weglassen; die Namen
 sichert weiter die udev-Regel `71-mox-net-naming.rules` (`phys_port_name`).
 Es erscheinen nur Warnungen ("still has no hw-id configured") ohne Folgen.
 
+## Image-Updates auf dem Mox (`add system image` + `mox-sync-boot`)
+
+Getestet 2026-10-02: `add system image <url>` funktioniert auf dem Mox, wenn
+zwei Dinge stimmen:
+
+1. **`BOOT_IMAGE=/boot/<image>/vmlinuz` auf der Kernel-Kommandozeile.** GRUB
+   setzt das, U-Boots `extlinux` nicht. Ohne diesen Parameter hält VyOS das
+   System für Live-Boot und bricht mit `The system is in live-boot mode.
+   Please use "install image" instead.` ab.
+2. **`extlinux.conf` auf der ESP kennt das neue Image.** Der Installer kennt nur
+   GRUB; er legt `/boot/<image>/` an und kopiert die Konfiguration, aktualisiert
+   aber nicht die ESP.
+
+Beides erledigt das mitgelieferte Skript `/usr/local/sbin/mox-sync-boot`
+(Flavor `generic-raw`, nicht ausführbar, daher mit `bash` aufrufen):
+
+```bash
+sudo bash /usr/local/sbin/mox-sync-boot -n   # Trockenlauf
+sudo bash /usr/local/sbin/mox-sync-boot      # anwenden
+```
+
+Es mountet die ESP, schreibt für das Standard-Image (aus GRUBs
+`vyos-versions`) und die neuesten weiteren (`MOX_MAX_ENTRIES`, Standard 2,
+die ESP hat nur 256 MB) `vmlinuz-<image>` (entpackt) und `initrd-<image>.img`,
+erzeugt `extlinux.conf` mit `BOOT_IMAGE=` und `vyos-union=` und löscht
+Dateien, die kein Eintrag mehr braucht. Es arbeitet Image für Image, jeder
+Zwischenstand ist bootbar. Ablauf für ein Update:
+
+```
+add system image http://<host>/<image>.iso     # Signatur-Rückfrage: y (Selbstbau)
+sudo bash /usr/local/sbin/mox-sync-boot
+reboot
+```
+
+Bei einem Altsystem ohne `BOOT_IMAGE=` einmalig `BOOT_IMAGE=/boot/<image>/vmlinuz`
+in die `extlinux.conf` eintragen (oder das Skript dort laufen lassen) — vor dem
+ersten `add system image`.
+
 ## Bekannte Risiken / offen
 
 - Debian-Wiki nennt bekannte MMC/USB3-Aussetzer nach dem Boot auf Mox bei
