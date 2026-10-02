@@ -504,6 +504,25 @@ gleiche Config, BTF) — deshalb im `vyos/vyos-build`-Container bauen.
 **Ohne den Kernel-Patch** (altes Image): Neustart nur per Power-Cycle, oder
 `sysrq-b` nach Setzen des Watchdog-Timeouts auf wenige Sekunden.
 
+## Neue vyos-1x-Namenslogik (ab Kernel 6.18.54-Image): `hw-id` nur einmal für die Switch-Ports
+
+Neuere vyos-1x-Versionen lösen Interface-Namen beim Booten über
+`vyos-net-name-resolve.py` auf (Schlüssel: `hw-id`/MAC). Alle 8 Switch-Ports
+(DSA) und `eth9` teilen sich dieselbe MAC `d8:58:d7:00:ce:ef`, auch
+`ethtool -P` meldet sie überall. Stehen mehrere `hw-id`s mit dieser MAC in
+`config.boot` ("multiple entries"), benennt das Skript willkürlich einen Port
+um (`eth2` wird zu `vyeth5`, der Rename auf `eth1` scheitert), `eth2` fehlt
+dann und der Commit endet mit `Configuration error`
+(`Interface "eth2" does not exist!`, `/tmp/boot-config-trace`).
+
+Funktionierende Konfiguration (verifiziert, `Configuration success`, keine
+Umbenennung): `hw-id` nur für `eth0` (`...:ee`) und **genau einmal** für die
+gemeinsame MAC, und zwar am Port, den das Skript ohnehin als Quelle wählt
+(hier `eth2`, deterministisch durch die sysfs-Reihenfolge der festen Namen).
+Bei `eth1` und `eth3`..`eth9` den `hw-id`-Eintrag weglassen; die Namen
+sichert weiter die udev-Regel `71-mox-net-naming.rules` (`phys_port_name`).
+Es erscheinen nur Warnungen ("still has no hw-id configured") ohne Folgen.
+
 ## Bekannte Risiken / offen
 
 - Debian-Wiki nennt bekannte MMC/USB3-Aussetzer nach dem Boot auf Mox bei

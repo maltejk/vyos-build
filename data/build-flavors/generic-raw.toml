@@ -14,3 +14,34 @@
 # (not the .iso) directly to the SD card with dd.
 
 image_format = ["iso", "raw"]
+
+# Turris Mox: deterministic interface names (see TURRIS_MOX.md). Harmless on
+# other boards, the rules only match the Mox's own platform device paths.
+[[includes_chroot]]
+path = "etc/udev/rules.d/71-mox-net-naming.rules"
+data = '''
+# Pin Turris Mox network interface names so they no longer depend on
+# kernel/DSA registration-race order (net.ifnames=0 / biosdevname=0 is set
+# via the extlinux boot args, so without this rule, naming order is purely
+# "whoever registers first" and was observed to differ between boots).
+#
+# Onboard mvneta ports (distinguished by their own, distinct platform
+# device path - these are real physical NICs, not DSA virtual ports):
+SUBSYSTEM=="net", ACTION=="add", KERNELS=="d0030000.ethernet", NAME="eth0"
+SUBSYSTEM=="net", ACTION=="add", KERNELS=="d0040000.ethernet", NAME="eth9"
+
+# Peridot/mv88e6xxx 8-port switch module: all 8 virtual DSA slave ports
+# share one physical device path (the switch chip's MDIO node), so they
+# can't be told apart by path/MAC (they also all inherit eth9's MAC).
+# phys_port_name instead reflects the switch chip's own stable hardware
+# port index (p1..p8) - use that to pin each to a fixed ethN name. Scoped
+# to the Mox switch's MDIO address so other boards' DSA ports stay untouched.
+SUBSYSTEM=="net", ACTION=="add", KERNELS=="d0032004.mdio-mii:10", ATTR{phys_port_name}=="p1", NAME="eth1"
+SUBSYSTEM=="net", ACTION=="add", KERNELS=="d0032004.mdio-mii:10", ATTR{phys_port_name}=="p2", NAME="eth2"
+SUBSYSTEM=="net", ACTION=="add", KERNELS=="d0032004.mdio-mii:10", ATTR{phys_port_name}=="p3", NAME="eth3"
+SUBSYSTEM=="net", ACTION=="add", KERNELS=="d0032004.mdio-mii:10", ATTR{phys_port_name}=="p4", NAME="eth4"
+SUBSYSTEM=="net", ACTION=="add", KERNELS=="d0032004.mdio-mii:10", ATTR{phys_port_name}=="p5", NAME="eth5"
+SUBSYSTEM=="net", ACTION=="add", KERNELS=="d0032004.mdio-mii:10", ATTR{phys_port_name}=="p6", NAME="eth6"
+SUBSYSTEM=="net", ACTION=="add", KERNELS=="d0032004.mdio-mii:10", ATTR{phys_port_name}=="p7", NAME="eth7"
+SUBSYSTEM=="net", ACTION=="add", KERNELS=="d0032004.mdio-mii:10", ATTR{phys_port_name}=="p8", NAME="eth8"
+'''
