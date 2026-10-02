@@ -144,6 +144,11 @@ echo "ESP:      $ESP_DEV ($(df -h "$ESP" | awk 'NR==2{print $4}') free)"
 echo "default:  $default_img"
 echo "entries:  ${selected[*]}"
 echo "args:     $BASE_ARGS"
+for v in "${selected[@]}"; do
+    if [ ! -s "$PERSIST/boot/$v/rw/opt/vyatta/etc/config/config.boot" ]; then
+        echo "WARNING:  image $v has no config.boot (configuration not copied - it will boot with the default config)"
+    fi
+done
 
 # --- helpers ---------------------------------------------------------------
 write_conf() {   # entries given as arguments; the first one is the default

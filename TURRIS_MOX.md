@@ -549,7 +549,9 @@ Es mountet die ESP, schreibt für das Standard-Image (aus GRUBs
 die ESP hat nur 256 MB) `vmlinuz-<image>` (entpackt) und `initrd-<image>.img`,
 erzeugt `extlinux.conf` mit `BOOT_IMAGE=` und `vyos-union=` und löscht
 Dateien, die kein Eintrag mehr braucht. Es arbeitet Image für Image, jeder
-Zwischenstand ist bootbar. Ablauf für ein Update:
+Zwischenstand ist bootbar. Es warnt, wenn einem Image die `config.boot` fehlt
+(`add system image` kopiert die Konfiguration nur bei Antwort `Y` auf "copy it to
+the new image?"; getestet: `config.boot`, SSH-Keys und `scripts/` werden übernommen). Ablauf für ein Update:
 
 ```
 add system image http://<host>/<image>.iso     # Signatur-Rückfrage: y (Selbstbau)
