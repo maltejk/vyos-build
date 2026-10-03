@@ -569,6 +569,47 @@ Bei einem Altsystem ohne `BOOT_IMAGE=` einmalig `BOOT_IMAGE=/boot/<image>/vmlinu
 in die `extlinux.conf` eintragen (oder das Skript dort laufen lassen) — vor dem
 ersten `add system image`.
 
+## Reboot, EFI-Boot und Bootpfade (Messungen 2026-10-03)
+
+**Reboot-Hang, Kurzfassung:** Der PSCI-Reset (`SYSTEM_RESET`) hängt aus laufendem
+Linux (aus U-Boots `reset` nicht). Ein Watchdog-Ablauf setzt dagegen sicher
+zurück (WTMI-Workaround, braucht `a3720_reset_issue_workaround=yes`). Der
+Kernel-Patch `0006` nutzt das (Restart-Handler Priorität 200). Warum PSCI aus
+Linux hängt, ist nicht geklärt; `turris_mox_rwtm` entladen ändert nichts.
+Abgekoppelter Watchdog (`unbind`) heißt nicht "PSCI geht": der Reset kam erst
+nach 46/52/92 s, zufällig, das ist die Restlaufzeit des von U-Boot gestarteten
+SoC-Watchdogs.
+
+**EFI-Boot und `reboot`:** arm64-`machine_restart()` ruft bei aktiven
+EFI-Runtime-Diensten zuerst `efi_reboot()` (`ResetSystem`) auf, erst danach die
+Restart-Handler. U-Boots Laufzeit-`ResetSystem` (`drivers/firmware/psci.c`)
+ruft nur PSCI `SYSTEM_RESET`, also denselben hängenden Aufruf. Der Watchdog-
+Handler kommt unter EFI nie zum Zug. Gemessen im selben GRUB-EFI-Setup:
+Standard = `reboot` hängt, mit Kernel-Argument `efi=noruntime` = Firmware-Banner
+1,5 s nach `Restarting system`. Es ist derselbe Fehler, kein zweiter.
+
+**GRUB-EFI läuft unter dem aktuellen U-Boot (2021.10-rc3):**
+- `bootefi` mit `fdtcontroladdr` scheitert (`board-specific fdt fixup failed:
+  FDT_ERR_NOTFOUND`, die Modul-Fixups in `ft_board_setup` passen nicht auf
+  U-Boots eigenes DTB). Mit dem Mox-DTB (aus dem SPI-Flash) startet GRUB-EFI.
+- `bootcmd=run mox_boot` liest das DTB aus dem SPI-NOR (`0x7f0000`, 64 KiB) nach
+  `fdt_addr_r` und startet dann den Distro-Boot (`boot_targets=mmc0 usb0 pxe dhcp`).
+  Das SPI-DTB ist byte-identisch mit `extlinux/spi-nor-mox.dtb` und enthält
+  `chosen/stdout-path = "serial0:115200n8"`.
+- Der EFI-Pfad des Distro-Boots (`boot_efi_binary`) übergibt `fdt_addr_r`, wenn
+  dort ein gültiges DTB liegt. Ohne `extlinux.conf` sollte U-Boot also ohne
+  Änderung seines Env `efi/boot/bootaa64.efi` mit dem richtigen DTB starten.
+- Die Meldung `EFI stub: ERROR: FIRMWARE BUG: kernel image not aligned on 64k
+  boundary` ist nur eine Warnung.
+- GRUBs Standard-Kernelargumente liefern nur `console=tty0` (keine serielle
+  Konsole auf dem Mox), es sei denn, man ergänzt `console=ttyMV0,115200`.
+
+**Die ISO ist nicht als SD-Image bootbar:** Die arm64-ISO hat im Systembereich
+nur Nullen (kein MBR/GPT; `live-build` setzt `-isohybrid-gpt-basdat` nur mit
+x86-ISOLINUX-MBR). U-Boot sucht Partitionen und hat keinen ISO9660-Treiber. Mit
+einem eigenen `xorriso`-Schritt (angehängte EFI-Partition aus `efi.img`, GPT)
+wäre sie bootbar, aber als Live-System.
+
 ## Bekannte Risiken / offen
 
 - Debian-Wiki nennt bekannte MMC/USB3-Aussetzer nach dem Boot auf Mox bei
