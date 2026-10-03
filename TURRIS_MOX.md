@@ -652,13 +652,53 @@ Ursache ist weiter offen. Tipp: Mit abgekoppeltem Watchdog-Gerät
 (`echo d0008300.watchdog > /sys/bus/platform/drivers/armada_37xx_wdt/unbind`)
 rettet U-Boots Watchdog einen hängenden Reboot nach 46-108 s ohne Power-Cycle.
 
-## Hybrid-ISO (Flavor `generic-sbc`, `iso_gpt_efi = true`)
+## ISO als einziges Artefakt: `dd` auf die SD und `install image` (Flavor `generic-sbc`)
 
-`build-vyos-image` erzeugt die ISO neu mit GPT und angehängter EFI-System-
-Partition (`efi.img`, wie Debian es für arm64 macht): Partition 1 ist das ISO9660-
-Dateisystem, Partition 2 `EFI System`. Dadurch findet U-Boot beim `dd` auf eine SD
-ein `efi/boot/bootaa64.efi`. Die `.raw` wird nur noch gebraucht, wenn man ohne
-Installer ein fertiges System schreiben will.
+Getestet am echten Mox (2026-10-03): `dd` der ISO auf die SD, booten, `install image`,
+Neustart, VyOS läuft von der SD. Ohne `.raw`, ohne `extlinux`, ohne Handarbeit.
+
+**1. Hybrid-ISO (`iso_gpt_efi = true`).** `build-vyos-image` erzeugt die ISO neu mit
+GPT und angehängter EFI-System-Partition (`efi.img`, wie Debian es für arm64 macht),
+dazu `-partition_offset 16`: Partition 1 (`ISO9660`) beginnt genau am ISO-Volume, das
+Live-System mountet `/dev/mmcblk?p1`, **nicht** das ganze Gerät. Das ist nötig, weil
+der Kernel ein `mkfs`/`mount` auf einer Partition verweigert (`Device or resource
+busy`), solange das ganze Gerät als Dateisystem gemountet ist. U-Boot findet auf
+Partition 2 `efi/boot/bootaa64.efi` (GRUB) und startet das Live-System.
+
+**2. `install image` auf dem Mox (Hook `27-mox-image-installer.chroot`).** `toram` geht
+auf 1 GiB nicht (OOM, siehe unten). Der Hook ändert `image_installer.py`, nur wenn
+das Gerät ein Turris Mox ist und das Ziel die Platte des laufenden Live-Mediums:
+ESP und Root entstehen im freien Platz **hinter** der ISO (`disk_cleanup()` wird
+nicht aufgerufen), `grub-install` läuft mit `--no-nvram` (U-Boot hat keine
+schreibbaren EFI-Variablen; U-Boot startet `EFI/BOOT/BOOTAA64.EFI`), und am Ende
+werden nur die drei GPT-Einträge der ISO entfernt (die Daten bleiben für das
+laufende Live-System lesbar). Beim nächsten Boot findet U-Boot die neue ESP zuerst.
+Auf anderen Systemen verhält sich der Installer wie Upstream. Der Hook arbeitet mit
+exakten String-Ersetzungen: ändert Upstream die Stellen, bricht der Image-Build ab.
+
+**3. Namen der Switch-Ports (Hook `28-mox-interface-naming.chroot`).** Die acht DSA-
+Ports teilen sich die MAC des CPU-Ports; die `hw-id`-Namenslogik von vyos-1x
+benennt sonst zufällig um (`eth2` wird zu `vyeth5`). Auf dem Mox nimmt der Hook die
+DSA-User-Ports (`iflink != ifindex`) aus `vyos-net-name-resolve.py` und aus
+`vyos-interface-rescan.py` heraus: Die Namen legt die udev-Regel fest, `hw-id` gibt es
+nur für `eth0` und `eth9`. Die frühere Handarbeit (`hw-id` nur auf einem Port) entfällt
+bei Neuinstallationen.
+
+**Ablauf:**
+
+```
+dd if=vyos-<ver>-generic-sbc-arm64.iso of=/dev/sdX bs=4M conv=fsync   # SD in den Mox
+# seriell (115200, ttyAMA0): Login vyos/vyos, dann
+install image                                                          # Standardantworten
+reboot
+```
+
+**Gemessen:** `reboot` setzt in 1,0 bis 1,2 s zurück, danach bootet GRUB-EFI von der
+neuen ESP. **`toram` auf dem Mox:** mit 470 MB Squashfs im RAM und den VyOS-Diensten
+gibt es einen OOM-Kill (`Out of memory: Killed process … python3` nach 242 s); mit
+maskierten Daemons erscheint nie ein Login-Prompt. Deshalb der Weg über den freien
+Platz hinter der ISO. Die `.raw` bleibt als Alternative erhalten (fertiges System ohne
+Installer), ist aber nicht mehr nötig.
 
 ## Bekannte Risiken / offen
 

@@ -1,0 +1,100 @@
+#!/usr/bin/env python3
+#
+# Turris Mox: keep the DSA switch ports out of the hw-id based interface naming.
+#
+# The eight ports of the Peridot switch module are DSA user ports. They have no
+# MAC address of their own (they inherit the one of the CPU port, which is also the
+# MAC of the on-board eth9) and their names are fixed by the udev rule
+# 71-mox-net-naming.rules (phys_port_name p1..p8). hw-id naming keys on the MAC,
+# so with nine interfaces sharing one MAC it renames ports at random and leaves
+# e.g. eth2 as "vyeth5". Therefore, on a Turris Mox,
+#   - vyos-net-name-resolve.py ignores DSA user ports when it discovers NICs, and
+#   - vyos-interface-rescan.py never writes a hw-id for them into config.boot.
+# A DSA user port is a device with a backing device whose iflink differs from its
+# ifindex (it is a stacked device on the conduit interface).
+#
+# Exact string replacements: if upstream changes the scripts so that a pattern no
+# longer matches, the image build fails here.
+
+import sys
+
+HELPERS = '''def is_turris_mox() -> bool:
+    """Detect a Turris Mox by its device tree"""
+    try:
+        with open('/proc/device-tree/compatible', 'rb') as f:
+            return b'cznic,turris-mox' in f.read()
+    except OSError:
+        return False
+
+
+def is_mox_dsa_user_port(ifname: str, sys_class_net: str = '/sys/class/net') -> bool:
+    """True for a switch port of the Turris Mox (DSA user port: iflink != ifindex)"""
+    if not is_turris_mox():
+        return False
+    try:
+        with open(f'{sys_class_net}/{ifname}/iflink') as f:
+            iflink = f.read().strip()
+        with open(f'{sys_class_net}/{ifname}/ifindex') as f:
+            ifindex = f.read().strip()
+    except OSError:
+        return False
+    return iflink != ifindex
+
+
+'''
+
+def patch(target, edits):
+    try:
+        with open(target) as f:
+            src = f.read()
+    except FileNotFoundError:
+        return
+    if 'is_mox_dsa_user_port' in src:
+        return
+    for old, new in edits:
+        if src.count(old) != 1:
+            sys.exit(f'28-mox-interface-naming: expected exactly one match in {target} for:\n{old}')
+        src = src.replace(old, new, 1)
+    with open(target, 'w') as f:
+        f.write(src)
+
+
+RESOLVE = '/usr/libexec/vyos/system/vyos-net-name-resolve.py'
+RESCAN = '/usr/libexec/vyos/vyos-interface-rescan.py'
+if len(sys.argv) > 2:
+    RESOLVE, RESCAN = sys.argv[1], sys.argv[2]
+
+patch(RESOLVE, [
+    ("def discover_physical_interfaces(sys_class_net: str = '/sys/class/net') -> dict:",
+     HELPERS + "def discover_physical_interfaces(sys_class_net: str = '/sys/class/net') -> dict:"),
+    ("""        if (entry / 'master').exists():
+            logger.debug(
+                f"skipping '{entry.name}': interface is enslaved via master link"
+            )
+            continue
+""",
+     """        if (entry / 'master').exists():
+            logger.debug(
+                f"skipping '{entry.name}': interface is enslaved via master link"
+            )
+            continue
+        if is_mox_dsa_user_port(entry.name, sys_class_net):
+            logger.debug(
+                f"skipping '{entry.name}': Turris Mox switch port, named by udev"
+            )
+            continue
+"""),
+])
+
+patch(RESCAN, [
+    ("def filter_interfaces(intfs: dict) -> dict:",
+     HELPERS + "def filter_interfaces(intfs: dict) -> dict:"),
+    ("""        if not os.path.isdir(os.path.join('/sys/class/net', intf)):
+            continue
+""",
+     """        if not os.path.isdir(os.path.join('/sys/class/net', intf)):
+            continue
+        if is_mox_dsa_user_port(intf):
+            continue
+"""),
+])
