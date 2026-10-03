@@ -8,7 +8,9 @@
 # 71-mox-net-naming.rules (phys_port_name p1..p8). hw-id naming keys on the MAC,
 # so with nine interfaces sharing one MAC it renames ports at random and leaves
 # e.g. eth2 as "vyeth5". Therefore, on a Turris Mox,
-#   - vyos-net-name-resolve.py ignores DSA user ports when it discovers NICs, and
+#   - vyos-net-name-resolve.py ignores DSA user ports when it discovers NICs (but
+#     still treats their names as taken, otherwise the bootstrap naming of a first
+#     boot would try to rename eth9 to the already used name eth1), and
 #   - vyos-interface-rescan.py never writes a hw-id for them into config.boot.
 # A DSA user port is a device with a backing device whose iflink differs from its
 # ifindex (it is a stacked device on the conduit interface).
@@ -39,6 +41,15 @@ def is_mox_dsa_user_port(ifname: str, sys_class_net: str = '/sys/class/net') -> 
     except OSError:
         return False
     return iflink != ifindex
+
+
+def mox_dsa_port_names(sys_class_net: str = '/sys/class/net') -> set:
+    """Names of all switch ports of the Turris Mox, they are never free for renaming"""
+    if not is_turris_mox():
+        return set()
+    import os
+    return {name for name in os.listdir(sys_class_net)
+            if is_mox_dsa_user_port(name, sys_class_net)}
 
 
 '''
@@ -84,6 +95,12 @@ patch(RESOLVE, [
             )
             continue
 """),
+    ("            taken = unchanged | set(plan.values()) | set(plan.keys()) | reserved\n",
+     "            taken = unchanged | set(plan.values()) | set(plan.keys()) | reserved\n"
+     "            taken |= mox_dsa_port_names()\n"),
+    ("        | set(rightful_movers.values()) | reserved_pending\n",
+     "        | set(rightful_movers.values()) | reserved_pending\n"
+     "    taken |= mox_dsa_port_names()\n"),
 ])
 
 patch(RESCAN, [
