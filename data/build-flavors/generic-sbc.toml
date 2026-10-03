@@ -18,6 +18,11 @@
 
 image_format = ["iso", "raw"]
 
+# Make the ISO bootable from an SD card / USB stick on boards with a U-Boot that
+# looks for partitions (GPT with an appended EFI System Partition, see
+# build-vyos-image). dd the ISO to the medium, boot, "install image".
+iso_gpt_efi = true
+
 # Turris Mox: deterministic interface names (see TURRIS_MOX.md). Harmless on
 # other boards, the rules only match the Mox's own platform device paths.
 [[includes_chroot]]
@@ -140,7 +145,7 @@ BASE_ARGS=
 if [ -f "$EXT/extlinux.conf" ]; then
     BASE_ARGS=$(sed -n 's/^[[:space:]]*APPEND[[:space:]]\+//p' "$EXT/extlinux.conf" | head -n1)
 fi
-[ -n "$BASE_ARGS" ] || BASE_ARGS="boot=live rootdelay=5 noautologin net.ifnames=0 biosdevname=0 console=ttyMV0,115200 earlycon=ar3700_uart,0xd0012000 vyos-config-debug"
+[ -n "$BASE_ARGS" ] || BASE_ARGS="boot=live rootdelay=5 noautologin net.ifnames=0 biosdevname=0 console=ttyAMA0,115200 earlycon=ar3700_uart,0xd0012000 vyos-config-debug"
 BASE_ARGS=$(echo "$BASE_ARGS" | tr ' ' '\n' | grep -v -e '^vyos-union=' -e '^BOOT_IMAGE=' | tr '\n' ' ' | sed 's/ *$//')
 
 echo "ESP:      $ESP_DEV ($(df -h "$ESP" | awk 'NR==2{print $4}') free)"

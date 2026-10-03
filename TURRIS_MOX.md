@@ -610,6 +610,56 @@ x86-ISOLINUX-MBR). U-Boot sucht Partitionen und hat keinen ISO9660-Treiber. Mit
 einem eigenen `xorriso`-Schritt (angehängte EFI-Partition aus `efi.img`, GPT)
 wäre sie bootbar, aber als Live-System.
 
+## Betrieb über GRUB-EFI (Stand 2026-10-03, getestet)
+
+U-Boot braucht dafür **keine** Änderung: `mox_boot` lädt das SPI-DTB nach
+`fdt_addr_r`, der Distro-Boot startet ohne `extlinux/extlinux.conf` den EFI-
+Fallback `efi/boot/bootaa64.efi` (GRUB). Das ist der normale VyOS-Weg: GRUB-
+Menü, `add system image` und `install image` funktionieren wie auf x86.
+
+Drei Kernel-Anpassungen machen das praxistauglich (Patches im Fork):
+
+| Patch | Wirkung |
+|---|---|
+| `0006` | Watchdog-Restart-Handler (Priorität 200); der PSCI-`SYSTEM_RESET` hängt aus Linux |
+| `0007` | Auf `cznic,turris-mox` kein `efi_reboot()` vor den Restart-Handlern. Unter EFI endete `ResetSystem()` in demselben hängenden PSCI-Aufruf |
+| `0008` | Der Mox-UART heißt `ttyAMA` (wie überall bei VyOS-arm64: `console=ttyAMA0,115200`, GRUB-Default, Default-Konfig). Kein `ttyMV0`-Sonderfall mehr |
+
+Messung (derselbe Mox, EFI-Boot, ohne `efi=noruntime`): `reboot` setzt in
+**1,0 s** zurück, dann startet U-Boot wieder GRUB-EFI. Für die serielle Konsole
+nach der Installation: `set system console device ttyAMA0 speed 115200` und
+`... kernel` (VyOS schreibt dann `console_type="ttyAMA"` in GRUBs Defaults).
+
+Umstellung eines extlinux-Systems: `extlinux/extlinux.conf` auf der ESP umbenennen
+(`.off`), `mox-sync-boot` nicht mehr benutzen. Zurück: Datei wieder umbenennen.
+
+Wichtig: Kernel-Argumente von Hand in GRUBs `vyos-versions/*.cfg` zu schreiben
+hilft nicht, VyOS erzeugt die Datei beim Booten neu.
+
+**Update über Variantenwechsel:** `add system image` bricht ab, wenn die
+Image-Variante nicht passt ("generic-raw" zu "generic-sbc", einmalig durch die
+Umbenennung). Dann den Installer direkt mit `--force` starten:
+`sudo python3 /usr/libexec/vyos/op_mode/image_installer.py --action add --force --image-path <url>`.
+
+**Firmware-Experimente (alle zurückgenommen, offizielle Firmware ist drauf):**
+BL31 mit begrenztem Konsolen-Flush (`psci_system_reset()` ruft `console_flush()`,
+dessen Schleife auf TX-leer unbegrenzt wartet), mit Watchdog-Armierung am Anfang
+des Handlers und am allerersten Punkt von `psci_system_reset()`: aus Linux kein
+schneller Reset, nur die Restlaufzeit des von U-Boot gestarteten Watchdogs
+(46-108 s) rettet. Auch `echo 0 > cpu1/online` (PSCI `CPU_OFF`) friert das
+System ein. Der PSCI-Aufruf erreicht BL31 offenbar nicht oder hängt davor; die
+Ursache ist weiter offen. Tipp: Mit abgekoppeltem Watchdog-Gerät
+(`echo d0008300.watchdog > /sys/bus/platform/drivers/armada_37xx_wdt/unbind`)
+rettet U-Boots Watchdog einen hängenden Reboot nach 46-108 s ohne Power-Cycle.
+
+## Hybrid-ISO (Flavor `generic-sbc`, `iso_gpt_efi = true`)
+
+`build-vyos-image` erzeugt die ISO neu mit GPT und angehängter EFI-System-
+Partition (`efi.img`, wie Debian es für arm64 macht): Partition 1 ist das ISO9660-
+Dateisystem, Partition 2 `EFI System`. Dadurch findet U-Boot beim `dd` auf eine SD
+ein `efi/boot/bootaa64.efi`. Die `.raw` wird nur noch gebraucht, wenn man ohne
+Installer ein fertiges System schreiben will.
+
 ## Bekannte Risiken / offen
 
 - Debian-Wiki nennt bekannte MMC/USB3-Aussetzer nach dem Boot auf Mox bei
