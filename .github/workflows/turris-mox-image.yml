@@ -1,10 +1,12 @@
 name: Turris Mox Image
 
 # Builds the Turris Mox (generic-sbc, arm64) ISO the way upstream builds its ISOs
-# (package-smoketest.yml: vyos/vyos-build container, build-vyos-image, vyos_mirror
-# from .github/config/smoketest-branches.json), but with the kernel built from this
-# tree first: the Mox needs the kernel patches in scripts/package-build/linux-kernel,
-# which the upstream package mirror does not have.
+# (package-smoketest.yml: build-vyos-image inside the vyos-build container, vyos_mirror
+# from .github/config/smoketest-branches.json), but
+#  - with the kernel built from this tree first: the Mox needs the kernel patches in
+#    scripts/package-build/linux-kernel, which the upstream package mirror does not have,
+#  - with the build container built natively from docker/Dockerfile on an arm64 runner:
+#    the vyos/vyos-build image on Docker Hub is amd64 only.
 
 on:
   workflow_dispatch:
@@ -29,7 +31,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       vyos_mirror: ${{ steps.config.outputs.vyos_mirror }}
-      container_image: ${{ steps.config.outputs.container_image }}
     steps:
       - uses: actions/checkout@v6
 
@@ -38,21 +39,24 @@ jobs:
         run: |
           CONFIG=$(jq ".branches[\"${UPSTREAM_BRANCH}\"]" .github/config/smoketest-branches.json)
           echo "vyos_mirror=$(echo $CONFIG | jq -r .vyos_mirror)" >> $GITHUB_OUTPUT
-          echo "container_image=$(echo $CONFIG | jq -r .container_image)" >> $GITHUB_OUTPUT
 
   kernel:
     needs: set_config
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 150
-    container:
-      image: ${{ needs.set_config.outputs.container_image }}
-      options: --sysctl net.ipv6.conf.lo.disable_ipv6=0 --privileged
     steps:
       - uses: actions/checkout@v6
 
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /opt/hostedtoolcache || true
+
+      - name: Build the build container (arm64)
+        run: docker build -t vyos/vyos-build:rolling docker
+
       - name: Build the kernel packages
-        working-directory: scripts/package-build/linux-kernel
-        run: sudo --preserve-env python3 build.py --packages linux-kernel
+        run: |
+          docker run --rm --privileged -v "$PWD:/vyos" -w /vyos/scripts/package-build/linux-kernel \
+            vyos/vyos-build:rolling bash -c "python3 build.py --packages linux-kernel"
 
       - name: Collect the packages the image build needs
         run: |
@@ -72,16 +76,19 @@ jobs:
     needs: [set_config, kernel]
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 90
-    container:
-      image: ${{ needs.set_config.outputs.container_image }}
-      options: --sysctl net.ipv6.conf.lo.disable_ipv6=0 --privileged
     steps:
       - uses: actions/checkout@v6
+
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /opt/hostedtoolcache || true
 
       - uses: actions/download-artifact@v8
         with:
           name: mox-kernel-packages
           path: packages
+
+      - name: Build the build container (arm64)
+        run: docker build -t vyos/vyos-build:rolling docker
 
       - name: Generate ISO version string
         id: version
@@ -92,15 +99,16 @@ jobs:
           # the ISO is the only artifact (installed from the SD card with `install image`),
           # skip the legacy raw disk image: it needs a 10 GB loop file
           sed -i 's/^image_format = .*/image_format = ["iso"]/' data/build-flavors/generic-sbc.toml
-          sudo --preserve-env ./build-vyos-image \
-            --architecture arm64 \
-            --build-by "$BUILD_BY" \
-            --build-type release \
-            --debian-mirror "$DEBIAN_MIRROR" \
-            --debian-security-mirror "$DEBIAN_SECURITY_MIRROR" \
-            --version ${{ steps.version.outputs.build_version }} \
-            --vyos-mirror ${{ needs.set_config.outputs.vyos_mirror }} \
-            generic-sbc
+          docker run --rm --privileged -v "$PWD:/vyos" -w /vyos vyos/vyos-build:rolling bash -c \
+            "sudo --preserve-env ./build-vyos-image \
+              --architecture arm64 \
+              --build-by $BUILD_BY \
+              --build-type release \
+              --debian-mirror $DEBIAN_MIRROR \
+              --debian-security-mirror $DEBIAN_SECURITY_MIRROR \
+              --version ${{ steps.version.outputs.build_version }} \
+              --vyos-mirror ${{ needs.set_config.outputs.vyos_mirror }} \
+              generic-sbc"
 
       - uses: actions/upload-artifact@v7
         with:
