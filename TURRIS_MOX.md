@@ -18,9 +18,12 @@ Keep the device powered during the update, recovery from a failed update is diff
 same update is available in reForis under Package Management. Details:
 [docs.turris.cz/geek/nor-update/nor-update](https://docs.turris.cz/geek/nor-update/nor-update/).
 
-Tested with the firmware of mox-boot-builder `v2022.06.11` (what the stable `turris-mox-firmware` package ships:
-TF-A v2.5, U-Boot 2021.10-rc3) and with `v2024.04.15`. The original factory U-Boot (2018.11) is not supported: in an
-earlier test it failed to chainload GRUB-EFI (`FIRMWARE BUG` in the EFI stub), and it could not be reproduced for a retest. No U-Boot configuration changes are needed; leave `a3720_reset_issue_workaround` unset.
+After the update the boot banner shows `U-Boot 2022.07 (Aug 15 2022 ...)` and TF-A v2.7 (the `turris-mox-firmware`
+2.0-r3 package). Verified with VyOS: self-built firmware of mox-boot-builder `v2022.06.11` (TF-A v2.5, U-Boot
+2021.10-rc3) and `v2024.04.15`. The prebuilt binary of the Turris package itself was not booted with VyOS. The
+original factory U-Boot (2018.11) is not supported: in an earlier test it failed to chainload GRUB-EFI (`FIRMWARE BUG`
+in the EFI stub), and it could not be reproduced for a retest. No U-Boot configuration changes are needed; leave
+`a3720_reset_issue_workaround` unset.
 
 Tested hardware: board version 22, SD-only variant, 8-port Peridot switch module.
 
@@ -137,3 +140,10 @@ aligned on 64k boundary` is only a warning.
 
 - Not tested: SFP, SATA and Mini-PCIe modules (not installed in the tested board), USB3 throughput.
 - The system time is wrong on the first boot (no RTC, NTP needs a moment); this causes harmless PAM warnings.
+
+## Back to Turris OS
+
+Download `https://repo.turris.cz/hbs/medkit/mox-medkit-latest.tar.gz` to the root of a FAT32 partition on the card,
+hold the button on the back while powering on, release it after about 10 seconds, and press it three times within the
+window that opens about 55 seconds after power-on (LED blinks 4 times = mode 4, re-flash from microSD). Details:
+[docs.turris.cz/hw/mox/rescue-modes](https://docs.turris.cz/hw/mox/rescue-modes/).
