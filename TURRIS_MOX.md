@@ -684,6 +684,16 @@ DSA-User-Ports (`iflink != ifindex`) aus `vyos-net-name-resolve.py` und aus
 nur für `eth0` und `eth9`. Die frühere Handarbeit (`hw-id` nur auf einem Port) entfällt
 bei Neuinstallationen.
 
+Der Hook hält außerdem die Namen der Switch-Ports (`eth1`..`eth8`) in
+`vyos-net-name-resolve.py` als belegt (`mox_dsa_port_names()`). Ohne das vergab der
+Bootstrap-Lauf des ersten Boots (noch keine `hw-id` in der Config) `eth1` an den CPU-Port
+`eth9`; der Rename scheiterte, `eth9` blieb als `vyeth3` stehen und der Boot-Commit
+endete mit `Invalid Ethernet interface name` ("Configuration error" beim ersten Boot einer
+frischen Installation). Nachstellen ohne SD neu zu schreiben: `add system image` mit
+"n" bei Config- und Schlüsselkopie, Tracing per `vyos-config-debug` oder
+`trace_config = True` im Overlay von `vyos-boot-config-loader.py`; Trace in
+`/tmp/boot-config-trace`.
+
 **Ablauf:**
 
 ```
