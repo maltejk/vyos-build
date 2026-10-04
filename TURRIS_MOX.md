@@ -487,8 +487,9 @@ des Watchdogs; Watchdog auf 4 s + `sysrq-b` bootet nach 4 s sauber (3/3).
 1. U-Boot-Variable einmalig setzen (Serial-Konsole, im U-Boot-Prompt). Sie schaltet in der
    WTMI-Firmware (Cortex-M3, nicht neu baubar) den Workaround für den Armada-3720-
    Reset-Hardwarefehler ein; die TF-A-Funktion `cm3_system_reset()` und der
-   Watchdog-Ablauf laufen darüber. Ob sie mit `0009` weiterhin zwingend ist, wurde nicht
-   ohne sie getestet; sie schadet nicht und bleibt gesetzt:
+   Watchdog-Ablauf laufen darüber. Mit `0009` ist sie **nicht mehr nötig** (getestet 2026-10-04: Variable gelöscht,
+   Power-Cycle, 3 von 3 `reboot` in 1,0-1,2 s). Nur für Kernel ohne `0009` (Watchdog-Workaround)
+   und andere Systeme relevant:
 
    ```
    setenv a3720_reset_issue_workaround yes
@@ -598,9 +599,9 @@ Fix: Kernel-Patch `0009-arm64-reserve-tfa-memory-on-turris-mox.patch` reserviert
 Damit waren der Watchdog-Restart-Handler (`0006`) und der EFI-Skip (`0007`) überflüssig und
 wurden entfernt. Test ohne beide (Image `…202610041052`, GRUB-EFI, Watchdog-Treiber
 geladen): `reboot` setzt in 1,0 / 1,0 / 1,2 s zurück (3 von 3). U-Boots EFI-`ResetSystem()`
-ruft jetzt das funktionierende PSCI auf. `a3720_reset_issue_workaround=yes` bleibt nötig
-(WTMI-Workaround, den `cm3_system_reset()` benutzt; ohne sie wurde mit `0009` nicht getestet,
-sie bleibt vorsichtshalber gesetzt).
+ruft jetzt das funktionierende PSCI auf. `a3720_reset_issue_workaround=yes` ist nicht mehr nötig
+(WTMI-Workaround, den `cm3_system_reset()` benutzt) wird mit `0009` nicht mehr gebraucht:
+ohne die Variable, nach Kaltstart, 3 von 3 Reboots in 1,0-1,2 s.
 
 ## Reboot, EFI-Boot und Bootpfade (Messungen 2026-10-03)
 
