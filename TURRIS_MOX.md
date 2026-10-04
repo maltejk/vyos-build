@@ -3,8 +3,26 @@
 VyOS rolling on the Turris Mox (Marvell Armada 3720, 1 GiB RAM, SD card only, U-Boot). One hybrid ISO is the only
 artifact: write it to the SD card, boot, run `install image`. Updates use `add system image`.
 
-Tested: board version 22, SD-only variant, 8-port Peridot switch module, official mox-boot-builder firmware
-v2024.04.15. No U-Boot changes are needed; leave `a3720_reset_issue_workaround` unset.
+## Prerequisite: current Turris OS firmware
+
+The Mox must run the current firmware (TF-A and U-Boot) that Turris OS ships. It does not update itself with the
+operating system, so update it once from Turris OS before writing the VyOS card:
+
+```
+opkg update && opkg install turris-nor-update
+nor-update
+reboot
+```
+
+Keep the device powered during the update, recovery from a failed update is difficult. On Turris OS 6.5 and later the
+same update is available in reForis under Package Management. Details:
+[docs.turris.cz/geek/nor-update/nor-update](https://docs.turris.cz/geek/nor-update/nor-update/).
+
+Tested with the firmware of mox-boot-builder `v2022.06.11` (what the stable `turris-mox-firmware` package ships:
+TF-A v2.5, U-Boot 2021.10-rc3) and with `v2024.04.15`. The original factory U-Boot (2018.11) cannot chainload GRUB-EFI
+and is not supported. No U-Boot configuration changes are needed; leave `a3720_reset_issue_workaround` unset.
+
+Tested hardware: board version 22, SD-only variant, 8-port Peridot switch module.
 
 ## Components
 
@@ -17,6 +35,7 @@ v2024.04.15. No U-Boot changes are needed; leave `a3720_reset_issue_workaround` 
 | Hybrid GPT/EFI ISO | `iso_gpt_efi` in `scripts/image-build/build-vyos-image` |
 | `install image` behind the live ISO | `data/live-build-config/hooks/live/27-mox-image-installer.chroot` |
 | Switch ports excluded from hw-id naming | `data/live-build-config/hooks/live/28-mox-interface-naming.chroot` |
+| Default config: DHCP on `eth0`, SSH | `data/live-build-config/hooks/live/29-flavor-default-config.chroot` |
 | CI workflow | `.github/workflows/turris-mox-image.yml` |
 
 The hooks use exact string replacements and only act on a Turris Mox (`cznic,turris-mox` in
@@ -28,19 +47,27 @@ The hooks use exact string replacements and only act on a Turris Mox (`cznic,tur
 sudo dd if=vyos-<version>-generic-sbc-arm64.iso of=/dev/sdX bs=4M status=progress conv=fsync
 ```
 
-Put the card into the Mox, connect the serial console (115200 8N1, `ttyAMA0`), log in as `vyos`/`vyos`, then:
+Put the card into the Mox and connect `eth0` to a network with a DHCP server. The live system takes an address with
+DHCP on `eth0` and has SSH enabled; no serial console is needed. Find the address in the DHCP leases, then:
 
 ```
-install image      # default answers
+ssh vyos@<address>      # password: vyos
+install image           # default answers; the password you enter becomes the password of the user vyos
 reboot
 ```
 
+The installed system keeps the DHCP address on `eth0` and the SSH service, so it is reachable the same way after the
+reboot. Serial console (115200 8N1, `ttyAMA0`) works as well, for example to watch the boot.
+
 The installer creates the ESP (256 MB) and the root partition in the free space behind the ISO, installs GRUB without
-an NVRAM entry, and removes the ISO partitions when it is done. A fresh installation has no SSH service:
-`set service ssh`, `commit`, `save`.
+an NVRAM entry, and removes the ISO partitions when it is done.
 
 Serial console in GRUB and kernel: `set system console device ttyAMA0 speed 115200` and
-`set system console device ttyAMA0 kernel`.
+`set system console device ttyAMA0 kernel` (already part of the default configuration).
+
+The default configuration is for a first installation only: the login `vyos`/`vyos` is valid until `install image`
+sets the password, and SSH stays enabled afterwards. Restrict it (`set service ssh ...`, firewall) before connecting
+`eth0` to an untrusted network.
 
 ## Update
 
