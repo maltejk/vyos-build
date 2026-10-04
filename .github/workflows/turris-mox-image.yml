@@ -1,0 +1,111 @@
+name: Turris Mox Image
+
+# Builds the Turris Mox (generic-sbc, arm64) ISO the way upstream builds its ISOs
+# (package-smoketest.yml: vyos/vyos-build container, build-vyos-image, vyos_mirror
+# from .github/config/smoketest-branches.json), but with the kernel built from this
+# tree first: the Mox needs the kernel patches in scripts/package-build/linux-kernel,
+# which the upstream package mirror does not have.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - turris-mox-support
+    paths-ignore:
+      - '**/*.md'
+
+permissions:
+  contents: read
+
+env:
+  BUILD_BY: autobuild@vyos.net
+  DEBIAN_MIRROR: http://deb.debian.org/debian/
+  DEBIAN_SECURITY_MIRROR: http://deb.debian.org/debian-security
+  # upstream branch whose mirror and container image are used
+  UPSTREAM_BRANCH: rolling
+
+jobs:
+  set_config:
+    runs-on: ubuntu-latest
+    outputs:
+      vyos_mirror: ${{ steps.config.outputs.vyos_mirror }}
+      container_image: ${{ steps.config.outputs.container_image }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Read the upstream branch configuration
+        id: config
+        run: |
+          CONFIG=$(jq ".branches[\"${UPSTREAM_BRANCH}\"]" .github/config/smoketest-branches.json)
+          echo "vyos_mirror=$(echo $CONFIG | jq -r .vyos_mirror)" >> $GITHUB_OUTPUT
+          echo "container_image=$(echo $CONFIG | jq -r .container_image)" >> $GITHUB_OUTPUT
+
+  kernel:
+    needs: set_config
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 150
+    container:
+      image: ${{ needs.set_config.outputs.container_image }}
+      options: --sysctl net.ipv6.conf.lo.disable_ipv6=0 --privileged
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build the kernel packages
+        working-directory: scripts/package-build/linux-kernel
+        run: sudo --preserve-env python3 build.py --packages linux-kernel
+
+      - name: Collect the packages the image build needs
+        run: |
+          mkdir -p packages
+          cp scripts/package-build/linux-kernel/linux-image-*-vyos_*_arm64.deb \
+             scripts/package-build/linux-kernel/linux-headers-*-vyos_*_arm64.deb packages/
+          rm -f packages/*-dbg_*
+          ls -la packages
+
+      - uses: actions/upload-artifact@v7
+        with:
+          retention-days: 2
+          name: mox-kernel-packages
+          path: packages/*.deb
+
+  iso:
+    needs: [set_config, kernel]
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    container:
+      image: ${{ needs.set_config.outputs.container_image }}
+      options: --sysctl net.ipv6.conf.lo.disable_ipv6=0 --privileged
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: mox-kernel-packages
+          path: packages
+
+      - name: Generate ISO version string
+        id: version
+        run: echo "build_version=$(date -u +'%Y.%m.%d-%H%M')-turris-mox" >> $GITHUB_OUTPUT
+
+      - name: Build the ISO
+        run: |
+          # the ISO is the only artifact (installed from the SD card with `install image`),
+          # skip the legacy raw disk image: it needs a 10 GB loop file
+          sed -i 's/^image_format = .*/image_format = ["iso"]/' data/build-flavors/generic-sbc.toml
+          sudo --preserve-env ./build-vyos-image \
+            --architecture arm64 \
+            --build-by "$BUILD_BY" \
+            --build-type release \
+            --debian-mirror "$DEBIAN_MIRROR" \
+            --debian-security-mirror "$DEBIAN_SECURITY_MIRROR" \
+            --version ${{ steps.version.outputs.build_version }} \
+            --vyos-mirror ${{ needs.set_config.outputs.vyos_mirror }} \
+            generic-sbc
+
+      - uses: actions/upload-artifact@v7
+        with:
+          retention-days: 7
+          name: vyos-${{ steps.version.outputs.build_version }}
+          path: |
+            build/*.iso
+            build/manifest.json
