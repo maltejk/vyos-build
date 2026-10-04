@@ -602,6 +602,9 @@ geladen): `reboot` setzt in 1,0 / 1,0 / 1,2 s zurück (3 von 3). U-Boots EFI-`Re
 ruft jetzt das funktionierende PSCI auf. Die U-Boot-Variable `a3720_reset_issue_workaround=yes`
 (WTMI-Workaround, den `cm3_system_reset()` benutzt) wird mit `0009` nicht mehr gebraucht:
 ohne sie, nach Kaltstart, 3 von 3 Reboots in 1,0-1,2 s.
+Die offizielle Mox-Firmware setzt sie ebenfalls nicht (nur `wtmi/soc.c` liest sie, kein
+Default-Env enthält sie; auf diesem Board war sie ursprünglich nicht gesetzt). Sie bleibt
+deshalb im Flash-Env ungesetzt, der Werkszustand genügt.
 
 ## Reboot, EFI-Boot und Bootpfade (Messungen 2026-10-03)
 
