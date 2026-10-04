@@ -569,13 +569,43 @@ Bei einem Altsystem ohne `BOOT_IMAGE=` einmalig `BOOT_IMAGE=/boot/<image>/vmlinu
 in die `extlinux.conf` eintragen (oder das Skript dort laufen lassen) — vor dem
 ersten `add system image`.
 
+## Wahre Ursache des PSCI-Hangs: TF-A-Speicher nicht reserviert (2026-10-04)
+
+Der PSCI-Hang (`SYSTEM_RESET`, `CPU_OFF`) kommt nicht aus dem TF-A-Code, sondern daher,
+dass **Linux den Speicher des TF-A überschreibt**. BL31 liegt im DRAM bei `0x4023000`
+(Trusted-ROM-Bereich `0x4000000`..`0x4400000`, siehe `platform_def.h` der a3k-Plattform).
+`armada-37xx.dtsi` reserviert ihn als `psci-area@4000000` ("should be updated by the
+bootloader"), aber die Device Tree, die U-Boot auf dem Mox übergibt (SPI-NOR-DTB), hat
+keinen `reserved-memory`-Knoten (`dmesg`: "No reserved-memory node in the DT"). Folge:
+`/proc/iomem` zeigt `0x4000000` als normales System RAM, der Allocator vergibt es, und
+`/proc/kpageflags` zeigte 28 von 29 Seiten des BL31-Bereichs als von Linux belegt. Beim
+Boot gehen PSCI-Aufrufe noch (CPU_ON für den zweiten Kern), später ist die Firmware
+kaputt: `SYSTEM_RESET` und `CPU_OFF` hängen, U-Boots `reset` geht (kein PSCI, Speicher
+ist dort intakt). Das erklärt auch das zufällige Verhalten bei älterer Firmware und dass
+kein BL31-Debug-Print (`DIAG`) nach dem Linux-Reboot erschien.
+
+Fix: Kernel-Patch `0009-arm64-reserve-tfa-memory-on-turris-mox.patch` reserviert in
+`arm64_memblock_init()` die 2 MiB ab `0x4000000` (reserve + nomap) für
+`cznic,turris-mox`. Gemessen auf dem Board (Image `…202610040923`):
+
+- `/proc/iomem`: `04000000-041fffff : reserved`, alle BL31-Seiten reserviert.
+- `echo 0 > cpu1/online`: "psci: CPU1 killed", `echo 1` bringt den Kern zurück
+  (vorher fror das System ein).
+- PSCI-`SYSTEM_RESET` ohne Watchdog-Gerät (Treiber `unbind`, kein `/dev/watchdog`):
+  Firmware-Banner 1,0 s nach "Restarting system", 2 von 2.
+
+Damit sind der Watchdog-Restart-Handler (`0006`) und der EFI-Skip (`0007`) im Prinzip
+überflüssig (PSCI und damit auch U-Boots EFI-`ResetSystem()` gehen wieder); sie wurden
+noch nicht entfernt und nicht ohne sie getestet. `a3720_reset_issue_workaround=yes` bleibt
+nötig (WTMI-Workaround, den `cm3_system_reset()` benutzt).
+
 ## Reboot, EFI-Boot und Bootpfade (Messungen 2026-10-03)
 
 **Reboot-Hang, Kurzfassung:** Der PSCI-Reset (`SYSTEM_RESET`) hängt aus laufendem
 Linux (aus U-Boots `reset` nicht). Ein Watchdog-Ablauf setzt dagegen sicher
 zurück (WTMI-Workaround, braucht `a3720_reset_issue_workaround=yes`). Der
 Kernel-Patch `0006` nutzt das (Restart-Handler Priorität 200). Warum PSCI aus
-Linux hängt, ist nicht geklärt; `turris_mox_rwtm` entladen ändert nichts.
+Linux hängt: siehe den Abschnitt "Wahre Ursache des PSCI-Hangs" unten (TF-A-Speicher nicht reserviert); `turris_mox_rwtm` entladen ändert nichts.
 Abgekoppelter Watchdog (`unbind`) heißt nicht "PSCI geht": der Reset kam erst
 nach 46/52/92 s, zufällig, das ist die Restlaufzeit des von U-Boot gestarteten
 SoC-Watchdogs.
