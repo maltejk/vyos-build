@@ -482,9 +482,13 @@ Power-Cycle hilft. U-Boots eigenes `reset` funktioniert immer.
 Belegt: `sysrq-b` (Watchdog bleibt scharf) erholt sich nach der Restlaufzeit
 des Watchdogs; Watchdog auf 4 s + `sysrq-b` bootet nach 4 s sauber (3/3).
 
-**Fix, zwei Teile (beide nötig):**
+**Fix (Stand 2026-10-04: der Kernel-Teil ist jetzt `0009`, siehe "Wahre Ursache des PSCI-Hangs"; die U-Boot-Variable unten war Voraussetzung des damaligen Watchdog-Workarounds):**
 
-1. U-Boot-Variable einmalig setzen (Serial-Konsole, im U-Boot-Prompt):
+1. U-Boot-Variable einmalig setzen (Serial-Konsole, im U-Boot-Prompt). Sie schaltet in der
+   WTMI-Firmware (Cortex-M3, nicht neu baubar) den Workaround für den Armada-3720-
+   Reset-Hardwarefehler ein; die TF-A-Funktion `cm3_system_reset()` und der
+   Watchdog-Ablauf laufen darüber. Ob sie mit `0009` weiterhin zwingend ist, wurde nicht
+   ohne sie getestet; sie schadet nicht und bleibt gesetzt:
 
    ```
    setenv a3720_reset_issue_workaround yes
@@ -595,7 +599,8 @@ Damit waren der Watchdog-Restart-Handler (`0006`) und der EFI-Skip (`0007`) übe
 wurden entfernt. Test ohne beide (Image `…202610041052`, GRUB-EFI, Watchdog-Treiber
 geladen): `reboot` setzt in 1,0 / 1,0 / 1,2 s zurück (3 von 3). U-Boots EFI-`ResetSystem()`
 ruft jetzt das funktionierende PSCI auf. `a3720_reset_issue_workaround=yes` bleibt nötig
-(WTMI-Workaround, den `cm3_system_reset()` benutzt).
+(WTMI-Workaround, den `cm3_system_reset()` benutzt; ohne sie wurde mit `0009` nicht getestet,
+sie bleibt vorsichtshalber gesetzt).
 
 ## Reboot, EFI-Boot und Bootpfade (Messungen 2026-10-03)
 
