@@ -1,0 +1,239 @@
+# Generic raw disk image (GPT + FAT32 ESP + GRUB + ext4 root), for boards
+# without BIOS/El-Torito CD boot support - e.g. single-board computers like
+# the Turris Mox, whose U-Boot only scans GPT/MBR partition tables for a FAT
+# ESP (UEFI "distro boot"), the same way it works for Debian/Armbian SD-card
+# images. The plain "generic" flavor only produces an ISO9660 image with an
+# El-Torito boot catalog and NO partition table at all - dd'ing that to an SD
+# card gives U-Boot nothing to find, since El-Torito is a BIOS/CD-ROM-only
+# boot mechanism.
+#
+# Build with:
+#   ./build-vyos-image --architecture arm64 --build-by <you> generic-sbc
+#
+# Output:
+#   build/vyos-<version>-generic-sbc-arm64.raw - disk image, write it directly
+#     to the SD card with dd (first installation)
+#   build/vyos-<version>-generic-sbc-arm64.iso - ISO9660 installer image, use it
+#     for updates of a running system ("add system image <url>"), not for dd
+
+image_format = ["iso", "raw"]
+
+# Make the ISO bootable from an SD card / USB stick on boards with a U-Boot that
+# looks for partitions (GPT with an appended EFI System Partition, see
+# build-vyos-image). dd the ISO to the medium, boot, "install image".
+iso_gpt_efi = true
+
+# Turris Mox: deterministic interface names (see TURRIS_MOX.md). Harmless on
+# other boards, the rules only match the Mox's own platform device paths.
+[[includes_chroot]]
+path = "etc/udev/rules.d/71-mox-net-naming.rules"
+data = '''
+# Pin Turris Mox network interface names so they no longer depend on
+# kernel/DSA registration-race order (net.ifnames=0 / biosdevname=0 is set
+# via the extlinux boot args, so without this rule, naming order is purely
+# "whoever registers first" and was observed to differ between boots).
+#
+# Onboard mvneta ports (distinguished by their own, distinct platform
+# device path - these are real physical NICs, not DSA virtual ports):
+SUBSYSTEM=="net", ACTION=="add", KERNELS=="d0030000.ethernet", NAME="eth0"
+SUBSYSTEM=="net", ACTION=="add", KERNELS=="d0040000.ethernet", NAME="eth9"
+
+# Peridot/mv88e6xxx 8-port switch module: all 8 virtual DSA slave ports
+# share one physical device path (the switch chip's MDIO node), so they
+# can't be told apart by path/MAC (they also all inherit eth9's MAC).
+# phys_port_name instead reflects the switch chip's own stable hardware
+# port index (p1..p8) - use that to pin each to a fixed ethN name. Scoped
+# to the Mox switch's MDIO address so other boards' DSA ports stay untouched.
+SUBSYSTEM=="net", ACTION=="add", KERNELS=="d0032004.mdio-mii:10", ATTR{phys_port_name}=="p1", NAME="eth1"
+SUBSYSTEM=="net", ACTION=="add", KERNELS=="d0032004.mdio-mii:10", ATTR{phys_port_name}=="p2", NAME="eth2"
+SUBSYSTEM=="net", ACTION=="add", KERNELS=="d0032004.mdio-mii:10", ATTR{phys_port_name}=="p3", NAME="eth3"
+SUBSYSTEM=="net", ACTION=="add", KERNELS=="d0032004.mdio-mii:10", ATTR{phys_port_name}=="p4", NAME="eth4"
+SUBSYSTEM=="net", ACTION=="add", KERNELS=="d0032004.mdio-mii:10", ATTR{phys_port_name}=="p5", NAME="eth5"
+SUBSYSTEM=="net", ACTION=="add", KERNELS=="d0032004.mdio-mii:10", ATTR{phys_port_name}=="p6", NAME="eth6"
+SUBSYSTEM=="net", ACTION=="add", KERNELS=="d0032004.mdio-mii:10", ATTR{phys_port_name}=="p7", NAME="eth7"
+SUBSYSTEM=="net", ACTION=="add", KERNELS=="d0032004.mdio-mii:10", ATTR{phys_port_name}=="p8", NAME="eth8"
+'''
+
+# Turris Mox: helper that syncs U-Boot's extlinux.conf with the installed VyOS
+# images (add/delete system image only know GRUB). Not executable (this
+# mechanism writes plain files), run: sudo bash /usr/local/sbin/mox-sync-boot
+[[includes_chroot]]
+path = "usr/local/sbin/mox-sync-boot"
+data = '''
+#!/bin/bash
+# mox-sync-boot - keep the Turris Mox U-Boot extlinux.conf in sync with the
+# VyOS images installed on the root partition.
+#
+# The Mox boots through U-Boot's extlinux support (GRUB-EFI does not work there),
+# but "add system image" / "install image" only know GRUB. After installing or
+# deleting an image run:
+#
+#   sudo bash /usr/local/sbin/mox-sync-boot            # apply
+#   sudo bash /usr/local/sbin/mox-sync-boot -n         # dry run, change nothing
+#
+# What it does:
+#   - finds the FAT ESP on the same disk as the VyOS root partition and mounts it
+#   - for the default image (as chosen by VyOS in GRUB's vyos-versions) and the
+#     newest others, up to MOX_MAX_ENTRIES (default 2, the ESP is only 256 MB),
+#     writes /extlinux/vmlinuz-<image> (unpacked, booti needs a raw Image) and
+#     /extlinux/initrd-<image>.img
+#   - writes /extlinux/extlinux.conf with one entry per image; the kernel command
+#     line carries BOOT_IMAGE=/boot/<image>/vmlinuz, which lets VyOS recognise the
+#     system as installed (otherwise "add system image" refuses: live-boot mode)
+#   - removes kernel/initrd files on the ESP that no entry references any more
+#
+# The kernel arguments of the current first APPEND line are reused, except
+# vyos-union= and BOOT_IMAGE=. The device tree stays /extlinux/spi-nor-mox.dtb.
+
+set -eu
+
+MAX_ENTRIES=${MOX_MAX_ENTRIES:-2}
+PERSIST=${MOX_PERSIST:-/lib/live/mount/persistence}
+DRY=0
+[ "${1:-}" = "-n" ] && DRY=1
+
+die() { echo "mox-sync-boot: $*" >&2; exit 1; }
+[ "$(id -u)" -eq 0 ] || die "must run as root (use sudo)"
+[ -d "$PERSIST/boot" ] || die "$PERSIST/boot not found - not booted from an installed VyOS image"
+
+# --- locate and mount the ESP --------------------------------------------
+ROOT_DEV=$(findmnt -no SOURCE "$PERSIST")
+DISK=$(lsblk -no PKNAME "$ROOT_DEV" | head -n1)
+ESP_DEV=
+for p in $(lsblk -nlo NAME,FSTYPE "/dev/$DISK" | awk '$2=="vfat"{print $1}'); do
+    ESP_DEV=/dev/$p
+    break
+done
+[ -n "$ESP_DEV" ] || die "no vfat partition found on /dev/$DISK"
+
+ESP=$(mktemp -d /tmp/mox-esp.XXXXXX)
+cleanup() { umount "$ESP" 2>/dev/null || true; rmdir "$ESP" 2>/dev/null || true; }
+trap cleanup EXIT
+mount "$ESP_DEV" "$ESP"
+EXT=$ESP/extlinux
+[ -f "$EXT/spi-nor-mox.dtb" ] || die "$EXT/spi-nor-mox.dtb missing - refusing to touch this ESP"
+
+# --- images, default first, then newest ------------------------------------
+all_images=()
+for d in "$PERSIST"/boot/*/; do
+    v=$(basename "$d")
+    [ -f "$d/vmlinuz" ] && [ -f "$d/initrd.img" ] && ls "$d"/*.squashfs >/dev/null 2>&1 && all_images+=("$v")
+done
+[ ${#all_images[@]} -gt 0 ] || die "no VyOS image found in $PERSIST/boot"
+
+default_img=
+G=$PERSIST/boot/grub/grub.cfg.d
+if [ -f "$G/20-vyos-defaults-autoload.cfg" ]; then
+    id=$(sed -n 's/^set default="\(.*\)"/\1/p' "$G/20-vyos-defaults-autoload.cfg")
+    if [ -n "$id" ]; then
+        f=$(grep -l -- "--id $id " "$G"/vyos-versions/*.cfg 2>/dev/null | head -n1 || true)
+        [ -n "$f" ] && default_img=$(basename "$f" .cfg)
+    fi
+fi
+[ -n "$default_img" ] && [ -f "$PERSIST/boot/$default_img/vmlinuz" ] || default_img=
+selected=()
+[ -n "$default_img" ] && selected+=("$default_img")
+for v in $(printf '%s\n' "${all_images[@]}" | sort -r); do
+    [ ${#selected[@]} -ge "$MAX_ENTRIES" ] && break
+    [ "$v" = "$default_img" ] && continue
+    selected+=("$v")
+done
+[ -n "$default_img" ] || default_img=${selected[0]}
+
+# --- common kernel arguments ---------------------------------------------
+BASE_ARGS=
+if [ -f "$EXT/extlinux.conf" ]; then
+    BASE_ARGS=$(sed -n 's/^[[:space:]]*APPEND[[:space:]]\+//p' "$EXT/extlinux.conf" | head -n1)
+fi
+[ -n "$BASE_ARGS" ] || BASE_ARGS="boot=live rootdelay=5 noautologin net.ifnames=0 biosdevname=0 console=ttyAMA0,115200 earlycon=ar3700_uart,0xd0012000 vyos-config-debug"
+BASE_ARGS=$(echo "$BASE_ARGS" | tr ' ' '\n' | grep -v -e '^vyos-union=' -e '^BOOT_IMAGE=' | tr '\n' ' ' | sed 's/ *$//')
+
+echo "ESP:      $ESP_DEV ($(df -h "$ESP" | awk 'NR==2{print $4}') free)"
+echo "default:  $default_img"
+echo "entries:  ${selected[*]}"
+echo "args:     $BASE_ARGS"
+for v in "${selected[@]}"; do
+    if [ ! -s "$PERSIST/boot/$v/rw/opt/vyatta/etc/config/config.boot" ]; then
+        echo "WARNING:  image $v has no config.boot (configuration not copied - it will boot with the default config)"
+    fi
+done
+
+# --- helpers ---------------------------------------------------------------
+write_conf() {   # entries given as arguments; the first one is the default
+    {
+        echo "DEFAULT $1"
+        for v in "$@"; do
+            echo "LABEL $v"
+            echo "    KERNEL /extlinux/vmlinuz-$v"
+            echo "    FDT /extlinux/spi-nor-mox.dtb"
+            echo "    INITRD /extlinux/initrd-$v.img"
+            echo "    APPEND $BASE_ARGS vyos-union=/boot/$v BOOT_IMAGE=/boot/$v/vmlinuz"
+        done
+    } > "$EXT/extlinux.conf.new"
+    [ -f "$EXT/extlinux.conf.bak" ] || { [ -f "$EXT/extlinux.conf" ] && cp "$EXT/extlinux.conf" "$EXT/extlinux.conf.bak"; }
+    mv "$EXT/extlinux.conf.new" "$EXT/extlinux.conf"
+    sync
+}
+
+prune() {        # remove kernel/initrd files not referenced by the given entries
+    local f b v keep
+    for f in "$EXT"/vmlinuz "$EXT"/initrd.img "$EXT"/vmlinuz-* "$EXT"/initrd-*.img; do
+        [ -f "$f" ] || continue
+        b=$(basename "$f")
+        keep=0
+        for v in "$@"; do
+            if [ "$b" = "vmlinuz-$v" ] || [ "$b" = "initrd-$v.img" ]; then keep=1; fi
+        done
+        if [ "$keep" -eq 0 ]; then
+            echo "removing unreferenced $b"
+            rm -f "$f"
+        fi
+    done
+    sync
+}
+
+need_for() {     # bytes still to be written for one image
+    local v=$1 n=0 ksize
+    if [ ! -f "$EXT/vmlinuz-$v" ]; then
+        ksize=$(gzip -l "$PERSIST/boot/$v/vmlinuz" 2>/dev/null | awk 'NR==2{print $2}')
+        n=$((n + ${ksize:-$(stat -c %s "$PERSIST/boot/$v/vmlinuz")}))
+    fi
+    [ -f "$EXT/initrd-$v.img" ] || n=$((n + $(stat -c %s "$PERSIST/boot/$v/initrd.img")))
+    echo "$n"
+}
+
+if [ "$DRY" -eq 1 ]; then
+    for v in "${selected[@]}"; do
+        echo "would write $v: $(( $(need_for "$v") / 1048576 )) MiB"
+    done
+    echo "dry run: nothing changed (free now: $(df -h "$ESP" | awk 'NR==2{print $4}'); files no entry needs are removed after each image)"
+    exit 0
+fi
+
+# --- one image at a time: copy, switch the config, prune -------------------
+done_imgs=()
+for v in "${selected[@]}"; do
+    src=$PERSIST/boot/$v
+    free=$(df -B1 --output=avail "$ESP" | tail -n1)
+    need=$(need_for "$v")
+    [ "$need" -lt "$free" ] || die "not enough space on the ESP for $v ($((need / 1048576)) MiB needed) - lower MOX_MAX_ENTRIES"
+    if [ ! -f "$EXT/vmlinuz-$v" ]; then
+        if gzip -t "$src/vmlinuz" 2>/dev/null; then
+            gunzip -c "$src/vmlinuz" > "$EXT/vmlinuz-$v.tmp"
+        else
+            cp "$src/vmlinuz" "$EXT/vmlinuz-$v.tmp"
+        fi
+        mv "$EXT/vmlinuz-$v.tmp" "$EXT/vmlinuz-$v"
+    fi
+    if [ ! -f "$EXT/initrd-$v.img" ]; then
+        cp "$src/initrd.img" "$EXT/initrd-$v.img.tmp"
+        mv "$EXT/initrd-$v.img.tmp" "$EXT/initrd-$v.img"
+    fi
+    sync
+    done_imgs+=("$v")
+    write_conf "${done_imgs[@]}"
+    prune "${done_imgs[@]}"
+done
+echo "done:"
+cat "$EXT/extlinux.conf"
+'''
