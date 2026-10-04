@@ -494,12 +494,9 @@ des Watchdogs; Watchdog auf 4 s + `sysrq-b` bootet nach 4 s sauber (3/3).
    Danach einmal Power-Cycle (WTMI liest die Variable nur beim Kaltstart).
    Prüfen: `printenv a3720_reset_issue_workaround`.
 
-2. Kernel-Patch
-   `scripts/package-build/linux-kernel/patches/kernel/0006-armada-37xx-wdt-restart-handler.patch`:
-   der Watchdog-Treiber bekommt einen Restart-Handler mit Priorität 200
-   (vor PSCI, Priorität 129). Er startet den Watchdog mit 1 s Timeout neu
-   und wartet bis zu 5 s auf den Reset. Hilft das nicht, greift der
-   PSCI-Handler wie bisher als Fallback.
+2. Kernel-Patch `0006` (Watchdog-Restart-Handler, Priorität 200) war der erste Workaround
+   und ist seit 2026-10-04 **entfernt**: Die eigentliche Ursache (Linux überschreibt den
+   TF-A-Speicher) behebt `0009`, siehe "Wahre Ursache des PSCI-Hangs" weiter unten.
 
 **Test:** mit dem gepatchten Modul (`armada_37xx_wdt.ko`, temporär
 geladen) kam nach `reboot` der Firmware-Banner nach ca. 1,5 s und VyOS
@@ -594,10 +591,11 @@ Fix: Kernel-Patch `0009-arm64-reserve-tfa-memory-on-turris-mox.patch` reserviert
 - PSCI-`SYSTEM_RESET` ohne Watchdog-Gerät (Treiber `unbind`, kein `/dev/watchdog`):
   Firmware-Banner 1,0 s nach "Restarting system", 2 von 2.
 
-Damit sind der Watchdog-Restart-Handler (`0006`) und der EFI-Skip (`0007`) im Prinzip
-überflüssig (PSCI und damit auch U-Boots EFI-`ResetSystem()` gehen wieder); sie wurden
-noch nicht entfernt und nicht ohne sie getestet. `a3720_reset_issue_workaround=yes` bleibt
-nötig (WTMI-Workaround, den `cm3_system_reset()` benutzt).
+Damit waren der Watchdog-Restart-Handler (`0006`) und der EFI-Skip (`0007`) überflüssig und
+wurden entfernt. Test ohne beide (Image `…202610041052`, GRUB-EFI, Watchdog-Treiber
+geladen): `reboot` setzt in 1,0 / 1,0 / 1,2 s zurück (3 von 3). U-Boots EFI-`ResetSystem()`
+ruft jetzt das funktionierende PSCI auf. `a3720_reset_issue_workaround=yes` bleibt nötig
+(WTMI-Workaround, den `cm3_system_reset()` benutzt).
 
 ## Reboot, EFI-Boot und Bootpfade (Messungen 2026-10-03)
 
@@ -647,12 +645,12 @@ U-Boot braucht dafür **keine** Änderung: `mox_boot` lädt das SPI-DTB nach
 Fallback `efi/boot/bootaa64.efi` (GRUB). Das ist der normale VyOS-Weg: GRUB-
 Menü, `add system image` und `install image` funktionieren wie auf x86.
 
-Drei Kernel-Anpassungen machen das praxistauglich (Patches im Fork):
+Zwei Kernel-Anpassungen machen das praxistauglich (Patches im Fork; `0006`/`0007`
+aus der früheren Fassung sind seit 2026-10-04 durch `0009` ersetzt):
 
 | Patch | Wirkung |
 |---|---|
-| `0006` | Watchdog-Restart-Handler (Priorität 200); der PSCI-`SYSTEM_RESET` hängt aus Linux |
-| `0007` | Auf `cznic,turris-mox` kein `efi_reboot()` vor den Restart-Handlern. Unter EFI endete `ResetSystem()` in demselben hängenden PSCI-Aufruf |
+| `0009` | Reserviert den TF-A-Speicher (`0x4000000`, 2 MiB) auf `cznic,turris-mox`; sonst überschreibt Linux BL31 und PSCI `SYSTEM_RESET`/`CPU_OFF` hängen |
 | `0008` | Der Mox-UART heißt `ttyAMA` (wie überall bei VyOS-arm64: `console=ttyAMA0,115200`, GRUB-Default, Default-Konfig). Kein `ttyMV0`-Sonderfall mehr |
 
 Messung (derselbe Mox, EFI-Boot, ohne `efi=noruntime`): `reboot` setzt in
