@@ -1,0 +1,31 @@
+From: vyos-mox <noreply@example.invalid>
+Subject: [PATCH] arm64: reserve the TF-A memory region on the Turris Mox
+
+The device tree that U-Boot passes to Linux on the Turris Mox has no
+reserved-memory node for the Trusted Firmware-A region at 64 MiB (BL31 sits at
+0x4023000). Linux hands the memory to the page allocator and overwrites the PSCI
+firmware, so later PSCI calls (SYSTEM_RESET, CPU_OFF) hang the system. Reserve the
+2 MiB psci-area@4000000 of armada-37xx.dtsi for cznic,turris-mox when the device
+tree does not.
+---
+--- a/arch/arm64/mm/init.c
++++ b/arch/arm64/mm/init.c
+@@ -287,6 +287,18 @@ void __init arm64_memblock_init(void)
+ 	}
+ 
+ 	early_init_fdt_scan_reserved_mem();
++
++	/*
++	 * The device tree U-Boot passes on the Turris Mox lacks the reserved-memory
++	 * node for the TF-A (BL31) region at 64 MiB, so Linux hands that memory to
++	 * the allocator, overwrites the PSCI firmware, and from then on PSCI calls
++	 * such as SYSTEM_RESET and CPU_OFF hang the system. Reserve it here, as
++	 * psci-area@4000000 in armada-37xx.dtsi does.
++	 */
++	if (of_flat_dt_is_compatible(of_get_flat_dt_root(), "cznic,turris-mox")) {
++		memblock_reserve(0x4000000, 0x200000);
++		memblock_mark_nomap(0x4000000, 0x200000);
++	}
+ }
+ 
+ void __init bootmem_init(void)
