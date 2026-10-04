@@ -12,6 +12,11 @@
 #     still treats their names as taken, otherwise the bootstrap naming of a first
 #     boot would try to rename eth9 to the already used name eth1), and
 #   - vyos-interface-rescan.py never writes a hw-id for them into config.boot.
+# Pending nodes: the flavor's default config has an eth0 node without hw-id (DHCP).
+# On a Turris Mox udev already names the onboard ports eth0/eth9, so a candidate that
+# carries the name of a pending node is that node's hardware (upstream only matches
+# when there is exactly one pending node and exactly one candidate, which is never
+# the case with two onboard ports).
 # A DSA user port is a device with a backing device whose iflink differs from its
 # ifindex (it is a stacked device on the conduit interface).
 #
@@ -95,6 +100,20 @@ patch(RESOLVE, [
             )
             continue
 """),
+    ("    grouped = {'ethernet': [], 'wireless': []}\n",
+     """    matched = {}
+    if is_turris_mox():
+        pending_names = set().union(*pending.values()) if pending else set()
+        for mac, name in candidates:
+            if name in pending_names:
+                matched[mac] = name
+                logger.info(f"matching '{name}' to its pending node (named by udev)")
+        candidates = [(mac, name) for mac, name in candidates if mac not in matched]
+        pending = {kind: nodes - set(matched.values()) for kind, nodes in pending.items()}
+    grouped = {'ethernet': [], 'wireless': []}
+"""),
+    ("    matched = {}\n    for intf_type, nodes in pending.items():\n",
+     "    for intf_type, nodes in pending.items():\n"),
     ("            taken = unchanged | set(plan.values()) | set(plan.keys()) | reserved\n",
      "            taken = unchanged | set(plan.values()) | set(plan.keys()) | reserved\n"
      "            taken |= mox_dsa_port_names()\n"),
