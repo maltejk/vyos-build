@@ -19,8 +19,8 @@ same update is available in reForis under Package Management. Details:
 [docs.turris.cz/geek/nor-update/nor-update](https://docs.turris.cz/geek/nor-update/nor-update/).
 
 Tested with the firmware of mox-boot-builder `v2022.06.11` (what the stable `turris-mox-firmware` package ships:
-TF-A v2.5, U-Boot 2021.10-rc3) and with `v2024.04.15`. The original factory U-Boot (2018.11) cannot chainload GRUB-EFI
-and is not supported. No U-Boot configuration changes are needed; leave `a3720_reset_issue_workaround` unset.
+TF-A v2.5, U-Boot 2021.10-rc3) and with `v2024.04.15`. The original factory U-Boot (2018.11) is not supported: in an
+earlier test it failed to chainload GRUB-EFI (`FIRMWARE BUG` in the EFI stub), and it could not be reproduced for a retest. No U-Boot configuration changes are needed; leave `a3720_reset_issue_workaround` unset.
 
 Tested hardware: board version 22, SD-only variant, 8-port Peridot switch module.
 
