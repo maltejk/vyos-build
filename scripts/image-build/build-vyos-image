@@ -846,6 +846,24 @@ Pin-Priority: 600
                 if os.path.exists(include):
                     os.remove(include)
 
+        # Optionally make the ISO bootable from a block device on boards whose
+        # firmware looks for a partition table (single-board computers with
+        # U-Boot): live-build only creates an El Torito boot catalog on arm64.
+        # Recreate the ISO with a GPT that contains the ISO 9660 filesystem and
+        # an appended EFI System Partition holding the GRUB EFI image, and point
+        # the El Torito EFI entry to that partition. With -partition_offset the
+        # ISO 9660 volume starts exactly at the first partition, so the live
+        # system can mount partition 1 (not the whole device) and the rest of
+        # the disk stays usable while it runs.
+        if build_config.get("iso_gpt_efi", False):
+            print("I: Recreating the ISO with an appended GPT EFI System Partition")
+            cmd(f'xorriso -as mkisofs -R -r -J -joliet-long -l -cache-inodes -iso-level 3 '
+                f'-A "VyOS" -V "VyOS" -publisher "{build_config["build_by"]}" '
+                f'-partition_offset 16 '
+                f'-append_partition 2 0xef binary/boot/grub/efi.img -appended_part_as_gpt '
+                f'-e --interval:appended_partition_2:all:: -no-emul-boot '
+                f'-o live-image-{build_config["architecture"]}.hybrid.iso binary 2>&1')
+
         # Copy the image
         shutil.copy(f'live-image-{build_config["architecture"]}.hybrid.iso', iso_file)
 

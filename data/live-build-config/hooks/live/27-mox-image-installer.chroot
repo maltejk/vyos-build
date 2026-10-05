@@ -1,0 +1,229 @@
+#!/usr/bin/env python3
+#
+# Turris Mox: make "install image" work when the live ISO was written to the
+# only storage the board has (the SD card it boots from).
+#
+# The Mox has 1 GiB RAM, so "toram" is impossible, and the stock installer
+# repartitions the disk it is running from. On a Turris Mox, when the target
+# disk is the disk the live system booted from, the installer therefore
+#   - creates the EFI System Partition and the root partition in the free space
+#     behind the hybrid ISO instead of wiping the disk,
+#   - and, after GRUB is installed and everything is unmounted, removes the
+#     three GPT entries of the hybrid ISO (the data stay readable for the
+#     running live system), so U-Boot finds the new ESP first on the next boot.
+# Everywhere else the installer behaves exactly like upstream: all new code is
+# guarded by is_turris_mox() / the live medium check.
+#
+# The file is edited with exact string replacements; if upstream changes the
+# installer so that one of them no longer matches, the image build fails here.
+
+import sys
+
+TARGET = '/usr/libexec/vyos/op_mode/image_installer.py'
+
+if len(sys.argv) > 1:
+    TARGET = sys.argv[1]
+
+try:
+    with open(TARGET) as f:
+        src = f.read()
+except FileNotFoundError:
+    sys.exit(0)
+
+if 'is_turris_mox' in src:
+    sys.exit(0)
+
+def replace(old, new):
+    global src
+    if src.count(old) != 1:
+        sys.exit(f'27-mox-image-installer: expected exactly one match in {TARGET} for:\n{old}')
+    src = src.replace(old, new, 1)
+
+# --- helpers, placed before create_partitions() ---------------------------
+replace('''def create_partitions(target_disk: str, target_size: int,
+                      prompt: bool = True) -> None:
+    """Create partitions on a target disk
+
+    Args:
+        target_disk (str): a target disk
+        target_size (int): size of disk in bytes
+    """
+''', '''MSG_INFO_INSTALL_MOX_INPLACE: str = (
+    'This is a Turris Mox running from {0}. VyOS will be installed into the free '
+    'space behind the live system on the same drive; the live system partitions '
+    'are removed when the installation has finished.')
+MOX_COMPATIBLE: bytes = b'cznic,turris-mox'
+# GPT entries of the hybrid ISO (xorriso names the ISO volume, the gap and the appended EFI image)
+MOX_LIVE_PARTITION_NAMES: tuple = ('ISO9660', 'Gap0', 'Appended2', 'Gap1')
+MOX_ESP_SIZE: str = '256M'
+mox_live_partitions: list = []
+
+
+def is_turris_mox() -> bool:
+    """Detect a Turris Mox by its device tree"""
+    try:
+        return MOX_COMPATIBLE in Path('/proc/device-tree/compatible').read_bytes()
+    except OSError:
+        return False
+
+
+def mox_live_disk() -> str:
+    """Return the disk the live system booted from ('' if not a Turris Mox)"""
+    if not is_turris_mox():
+        return ''
+    rc, source = rc_cmd('findmnt -n -o SOURCE /usr/lib/live/mount/medium')
+    source = source.strip()
+    if rc != 0 or not source.startswith('/dev/'):
+        return ''
+    # -d: only the device itself, not its partitions (those would be listed too)
+    rc, parent = rc_cmd(f'lsblk -d -n -o PKNAME {source}')
+    parent = parent.strip().splitlines()[0].strip() if rc == 0 and parent.strip() else ''
+    return f'/dev/{parent}' if parent else source
+
+
+def mox_install_in_place(target_disk: str) -> bool:
+    """True if the installation target is the disk of the running live ISO"""
+    return bool(target_disk) and mox_live_disk() == target_disk
+
+
+def mox_partition_path(drive: str, number: int) -> str:
+    return f'{drive}p{number}' if drive[-1].isdigit() else f'{drive}{number}'
+
+
+def mox_gpt_partitions(drive: str) -> dict:
+    """Return {number: name} of the GPT entries on a drive"""
+    rc, out = rc_cmd(f'sgdisk -p {drive}')
+    parts = {}
+    for line in out.splitlines():
+        fields = line.split()
+        # "   1      64   1020579   498.3 MiB   0700  Gap0"
+        if len(fields) >= 7 and fields[0].isdigit() and fields[1].isdigit():
+            parts[int(fields[0])] = fields[-1]
+    return parts
+
+
+def mox_sgdisk_number(drive: str, option: str) -> int:
+    rc, out = rc_cmd(f'sgdisk {option} {drive}')
+    return int(out.split()[-1])
+
+
+def mox_create_partitions(target_disk: str, prompt: bool = True) -> disk.DiskDetails:
+    """Create ESP and root in the free space behind the hybrid ISO"""
+    global mox_live_partitions
+    existing = mox_gpt_partitions(target_disk)
+    mox_live_partitions = sorted(n for n, name in existing.items()
+                                 if name in MOX_LIVE_PARTITION_NAMES)
+    if not mox_live_partitions:
+        print('The live system partitions were not found, aborting.')
+        exit(1)
+
+    print(MSG_INFO_INSTALL_PARTITIONING)
+    # move the backup GPT to the real end of the (larger) disk
+    run(f'sgdisk -e {target_disk}')
+    first = mox_sgdisk_number(target_disk, '-F')
+    last = mox_sgdisk_number(target_disk, '-E')
+    esp_sectors = 256 * 1024**2 // 512
+    root_start = first + esp_sectors
+    available_size: int = ((last - root_start + 1) * 512) // 1024  # KB
+    if available_size * 1024 < CONST_MIN_ROOT_SIZE:
+        print(MSG_WARN_ROOT_SIZE_TOOSMALL)
+        exit(1)
+    rootfs_size: int = ask_root_size(available_size) if prompt else available_size
+
+    esp_nr = max(existing) + 1
+    root_nr = esp_nr + 1
+    run(f'sgdisk -n{esp_nr}:{first}:+{MOX_ESP_SIZE} -t{esp_nr}:EF00 -c{esp_nr}:EFI '
+        f'-n{root_nr}:{root_start}:+{rootfs_size}K -t{root_nr}:8300 '
+        f'-c{root_nr}:persistence {target_disk}')
+    sync()
+    run(f'partx -a --nr {esp_nr}:{root_nr} {target_disk}')
+    run('udevadm settle')
+
+    efi = mox_partition_path(target_disk, esp_nr)
+    root = mox_partition_path(target_disk, root_nr)
+    for _ in range(20):
+        if Path(efi).exists() and Path(root).exists():
+            break
+        run('sleep 0.5')
+    return disk.DiskDetails(name=target_disk, partition={'efi': efi, 'root': root})
+
+
+def mox_grub_install(drive: str, boot_dir: str, efi_dir: str) -> None:
+    """Install GRUB for the Turris Mox: U-Boot has no writable EFI variables,
+    so no boot entry can be registered (--no-nvram); U-Boot starts the removable
+    media path EFI/BOOT/BOOTAA64.EFI that --force-extra-removable creates."""
+    cmdl(['grub-install', '--no-floppy', '--recheck', '--target=arm64-efi',
+          '--force-extra-removable', '--no-nvram', f'--boot-directory={boot_dir}',
+          f'--efi-directory={efi_dir}', '--bootloader-id=VyOS', '--uefi-secure-boot'])
+
+
+def mox_drop_live_partitions(drive: str) -> None:
+    """Remove the hybrid ISO partitions so that U-Boot boots the new ESP"""
+    global mox_live_partitions
+    if not mox_live_partitions:
+        return
+    print('Removing the live system partitions')
+    for number in mox_live_partitions:
+        run(f'sgdisk -d {number} {drive}')
+    sync()
+    for number in mox_live_partitions:
+        run(f'partx -d --nr {number} {drive}')
+    mox_live_partitions = []
+
+
+def create_partitions(target_disk: str, target_size: int,
+                      prompt: bool = True) -> None:
+    """Create partitions on a target disk
+
+    Args:
+        target_disk (str): a target disk
+        target_size (int): size of disk in bytes
+    """
+    if mox_install_in_place(target_disk):
+        return mox_create_partitions(target_disk, prompt)
+
+''')
+
+# --- install_image(): GRUB without NVRAM entry on the Mox ----------------------
+replace('''            print('Installing GRUB to the drive')
+            grub.install(install_target.name, f'{DIR_DST_ROOT}/boot/',
+                         f'{DIR_DST_ROOT}/boot/efi')
+''', '''            print('Installing GRUB to the drive')
+            if is_turris_mox():
+                mox_grub_install(install_target.name, f'{DIR_DST_ROOT}/boot/',
+                                 f'{DIR_DST_ROOT}/boot/efi')
+            else:
+                grub.install(install_target.name, f'{DIR_DST_ROOT}/boot/',
+                             f'{DIR_DST_ROOT}/boot/efi')
+''')
+
+# --- ask_single_disk(): the data on the drive are not erased in this mode ----
+replace('''    # create partitions
+    if not ask_yes_no(MSG_INFO_INSTALL_DISK_CONFIRM):
+        print(MSG_INFO_INSTALL_EXIT)
+        exit()
+''', '''    # create partitions
+    if mox_install_in_place(disk_selected):
+        print(MSG_INFO_INSTALL_MOX_INPLACE.format(disk_selected))
+        confirm_message = 'Continue?'
+    else:
+        confirm_message = MSG_INFO_INSTALL_DISK_CONFIRM
+    if not ask_yes_no(confirm_message):
+        print(MSG_INFO_INSTALL_EXIT)
+        exit()
+''')
+
+# --- install_image(): drop the ISO partitions at the very end --------------
+replace('''        # we are done
+        print(MSG_INFO_INSTALL_SUCCESS)
+        exit()
+''', '''        if not is_raid_install(install_target):
+            mox_drop_live_partitions(install_target.name)
+
+        # we are done
+        print(MSG_INFO_INSTALL_SUCCESS)
+        exit()
+''')
+
+with open(TARGET, 'w') as f:
+    f.write(src)
