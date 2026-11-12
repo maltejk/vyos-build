@@ -45,6 +45,17 @@ echo "I: Selected plugins: ${BUILDTAGS}"
 
 echo "I: Build Debian ${BUILD_ARCH} package"
 cd ${SRC}
+
+# build.py stages source patches into debian/patches for dpkg-buildpackage;
+# this recipe builds straight from the tree with make instead, so apply
+# the staged patches here or they never reach the source.
+if [ -s debian/patches/series ]; then
+    while read -r patchfile; do
+        [ -n "$patchfile" ] || continue
+        echo "I: applying debian/patches/${patchfile}"
+        patch -p1 < "debian/patches/${patchfile}"
+    done < debian/patches/series
+fi
 export PATH=/opt/go/bin:$PATH
 
 # Generate default telegraf config
