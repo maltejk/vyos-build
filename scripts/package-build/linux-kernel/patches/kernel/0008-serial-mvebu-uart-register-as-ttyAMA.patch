@@ -1,0 +1,36 @@
+From: vyos-mox <noreply@example.invalid>
+Subject: [PATCH] serial: mvebu-uart: register the ports as ttyAMA
+
+VyOS arm64 images use console=ttyAMA0,115200 (kernel command line, GRUB
+defaults and the default configuration). Name the Armada 3700 UART ttyAMA so
+the Turris Mox needs no console special cases.
+---
+--- a/drivers/tty/serial/mvebu-uart.c
++++ b/drivers/tty/serial/mvebu-uart.c
+@@ -773,7 +773,7 @@
+ 	port = &mvebu_uart_ports[co->index];
+ 
+ 	if (!port->mapbase || !port->membase) {
+-		pr_debug("console on ttyMV%i not present\n", co->index);
++		pr_debug("console on ttyAMA%i not present\n", co->index);
+ 		return -ENODEV;
+ 	}
+ 
+@@ -786,7 +786,7 @@
+ static struct uart_driver mvebu_uart_driver;
+ 
+ static struct console mvebu_uart_console = {
+-	.name	= "ttyMV",
++	.name	= "ttyAMA",
+ 	.write	= mvebu_uart_console_write,
+ 	.device	= uart_console_device,
+ 	.setup	= mvebu_uart_console_setup,
+@@ -809,7 +809,7 @@
+ static struct uart_driver mvebu_uart_driver = {
+ 	.owner			= THIS_MODULE,
+ 	.driver_name		= DRIVER_NAME,
+-	.dev_name		= "ttyMV",
++	.dev_name		= "ttyAMA",
+ 	.nr			= MVEBU_NR_UARTS,
+ #ifdef CONFIG_SERIAL_MVEBU_CONSOLE
+ 	.cons			= &mvebu_uart_console,

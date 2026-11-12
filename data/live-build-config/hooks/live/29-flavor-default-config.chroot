@@ -1,0 +1,29 @@
+#!/bin/sh
+
+# Flavors for boards without a video output (generic-sbc: Turris Mox) must be
+# installable and usable without a serial console. Upstream's default config only
+# has a loopback interface and the SSH service is disabled, so a freshly booted
+# live system or a freshly installed image can only be reached on the console.
+# Like 95-serial.chroot this implants the settings into the default config of the
+# image; "install image" copies the live configuration to the installed system, so
+# DHCP and SSH are there after the installation as well. The password of the user
+# vyos is set during "install image".
+WRITE_CONFIG=$(python3 -c 'from vyos.defaults import base_dir; print(f"{base_dir}/write-config-file-value.py")')
+default_config_file=$(python3 -c 'from vyos.defaults import config_default; print(config_default)')
+flavor_file=$(python3 -c 'from vyos.defaults import directories; print(directories["data"] + "flavor.json" )')
+flavor=$(jq -r '.flavor' $flavor_file)
+
+if [ "$flavor" != generic-sbc ]; then
+    echo "I: Skipping network default config (flavor=$flavor)"
+    exit 0
+fi
+
+if ! test -x $WRITE_CONFIG || ! test -f $default_config_file; then
+    echo "E: missing script or default config to implant network settings"
+    exit 1
+fi
+
+$WRITE_CONFIG --path "interfaces ethernet eth0 address" --value dhcp \
+    --config-file $default_config_file
+$WRITE_CONFIG --path "service ssh" --config-file $default_config_file
+echo "I: Added DHCP on eth0 and the SSH service to: $default_config_file"

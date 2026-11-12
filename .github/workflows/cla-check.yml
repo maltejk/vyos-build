@@ -14,5 +14,7 @@ on:
 
 jobs:
   call-cla-assistant:
+    # the CLA is only collected in the upstream repository, not in forks
+    if: github.repository_owner == 'vyos'
     uses: vyos/vyos-cla-signatures/.github/workflows/cla-reusable.yml@production
     secrets: inherit

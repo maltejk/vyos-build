@@ -90,6 +90,13 @@ for fragment in "${CWD}"/config/*.config; do
     echo "I: adding configuration snippet ${fragment}"
     KCONFIG_MERGE_FRAGMENTS+=("${fragment}")
 done
+# Board-specific overrides that must win over the generic policy fragments
+# merged above (e.g. Turris Mox needs CONFIG_NET_DSA, which
+# config/10-networking.config disables by default for all architectures).
+if [ "${ARCH}" = "arm64" ] && [ -f "${CWD}/config/arm64/turris-mox.config" ]; then
+    echo "I: adding configuration snippet ${CWD}/config/arm64/turris-mox.config"
+    KCONFIG_MERGE_FRAGMENTS+=("${CWD}/config/arm64/turris-mox.config")
+fi
 if [ -n "${TRUSTED_KEYS_FRAGMENT_TMP}" ]; then
     echo "I: adding configuration snippet ${TRUSTED_KEYS_FRAGMENT_TMP}"
     KCONFIG_MERGE_FRAGMENTS+=("${TRUSTED_KEYS_FRAGMENT_TMP}")
