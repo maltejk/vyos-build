@@ -1,0 +1,27 @@
+From: VyOS SRX kernel build
+Subject: octeon: add missing octeon_send_ipi_single prototype
+
+arch/mips/cavium-octeon/smp.c defines octeon_send_ipi_single with no prior
+prototype, which breaks -Werror=missing-prototypes. Add the forward
+declaration the shipping tree carries (vendor kernel smp.c)
+immediately before the function's comment block.
+
+---
+ arch/mips/cavium-octeon/smp.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/arch/mips/cavium-octeon/smp.c b/arch/mips/cavium-octeon/smp.c
+--- a/arch/mips/cavium-octeon/smp.c
++++ b/arch/mips/cavium-octeon/smp.c
+@@ -90,6 +90,8 @@
+ 		return IRQ_HANDLED;
+ }
+
++void octeon_send_ipi_single(int cpu, unsigned int action);
++
+ /*
+  * Cause the function described by call_data to be executed on the passed
+  * cpu.	 When the function has finished, increment the finished field of
+--
+2.39.5
+

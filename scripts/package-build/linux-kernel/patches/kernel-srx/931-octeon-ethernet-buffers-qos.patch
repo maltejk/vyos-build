@@ -1,0 +1,43 @@
+octeon-ethernet: 4096 packet buffers, CS6/CS7 to RED-free QoS queue (931)
+
+FPA pool exhaustion at 1024 buffers overran the GMX RX FIFO under bidirectional
+load (PIP partial packets) and IPD RED dropped BFD.  Default 4096 buffers; DSCP
+48/56 -> IPD queue 7 (marks drop 0/pass 1) on uplink port 0.
+
+--- a/drivers/staging/octeon/ethernet.c	2026-10-23 18:12:55.322917921 +0000
++++ b/drivers/staging/octeon/ethernet.c	2026-10-23 18:12:55.323586171 +0000
+@@ -30,7 +30,7 @@
+ 
+ #define OCTEON_MAX_MTU 65392
+ 
+-static int num_packet_buffers = 1024;
++static int num_packet_buffers = 4096;
+ module_param(num_packet_buffers, int, 0444);
+ MODULE_PARM_DESC(num_packet_buffers, "\n"
+ 	"\tNumber of packet buffers to allocate and store in the\n"
+@@ -211,6 +211,25 @@
+ #endif
+ 
+ 	cvmx_helper_setup_red(num_packet_buffers / 4, num_packet_buffers / 8);
++
++	/*
++	 * Network-control traffic (DSCP CS6/CS7: BFD, BGP, OSPF) goes to IPD
++	 * QoS queue 7, which RED never drops; data keeps queues 0-6.  Without
++	 * this RED drops BFD under bidirectional load on the 1G uplink.
++	 */
++	{
++		union cvmx_pip_prt_cfgx prt_cfg;
++		union cvmx_ipd_qosx_red_marks marks;
++
++		prt_cfg.u64 = cvmx_read_csr(CVMX_PIP_PRT_CFGX(0));
++		prt_cfg.s.qos_diff = 1;
++		cvmx_write_csr(CVMX_PIP_PRT_CFGX(0), prt_cfg.u64);
++		cvmx_write_csr(CVMX_PIP_QOS_DIFFX(48), 7);
++		cvmx_write_csr(CVMX_PIP_QOS_DIFFX(56), 7);
++		marks.u64 = 0;
++		marks.s.pass = 1;
++		cvmx_write_csr(CVMX_IPD_QOSX_RED_MARKS(7), marks.u64);
++	}
+ }
+ 
+ /**
