@@ -1,0 +1,31 @@
+From: VyOS SRX kernel build
+Subject: builddeb: skip host-tool rebuild in headers deb for cross builds
+
+scripts/package/install-extmod-build rebuilds the host programs (fixdep,
+modpost, ...) inside the staged headers package with HOSTCC="${CC}", where
+CC is the cross compiler when CROSS_COMPILE is set. That requires the
+target libc on the build host, which the srx-kbuild image does not carry,
+so bindeb-pkg fails at the binary-headers stage (sys/types.h not found).
+Skip the rebuild for cross builds; the headers deb then ships the
+host-built script binaries.
+
+---
+ scripts/package/install-extmod-build | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/scripts/package/install-extmod-build b/scripts/package/install-extmod-build
+--- a/scripts/package/install-extmod-build
++++ b/scripts/package/install-extmod-build
+@@ -51,8 +51,8 @@
+ # When ${CC} and ${HOSTCC} differ, rebuild host programs using ${CC}.
+ #
+ # This caters to host programs that participate in Kbuild. objtool and
+ # resolve_btfids are out of scope.
+-if [ "${CC}" != "${HOSTCC}" ]; then
++if [ "${CC}" != "${HOSTCC}" ] && [ -z "${CROSS_COMPILE}" ]; then
+ 	cat "${destdir}/scripts/Makefile" - <<-'EOF' > "${destdir}/scripts/Kbuild"
+ 	subdir-y += basic
+ 	hostprogs-always-y += mod/modpost
+--
+2.39.5
+

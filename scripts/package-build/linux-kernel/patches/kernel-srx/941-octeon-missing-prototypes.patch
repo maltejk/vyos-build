@@ -1,0 +1,56 @@
+From: VyOS SRX kernel build
+Subject: octeon: add missing prototypes for pci, pcie, wdt
+
+pci-octeon.c and pcie-octeon.c define octeon_pci_pcibios_map_irq and
+octeon_pcie_pcibios_map_irq with no prior prototype, and octeon-wdt-main.c
+defines octeon_wdt_nmi_stage3 likewise; -Werror=missing-prototypes fails.
+Add the prototypes to pci-octeon.h, add octeon-wdt-main.h with the wdt
+prototype and include it from octeon-wdt-main.c.
+
+---
+ arch/mips/include/asm/octeon/pci-octeon.h | 6 ++++++
+ drivers/watchdog/octeon-wdt-main.c        | 2 ++
+ drivers/watchdog/octeon-wdt-main.h        | 5 +++++
+ 3 files changed, 13 insertions(+)
+
+diff --git a/arch/mips/include/asm/octeon/pci-octeon.h b/arch/mips/include/asm/octeon/pci-octeon.h
+--- a/arch/mips/include/asm/octeon/pci-octeon.h
++++ b/arch/mips/include/asm/octeon/pci-octeon.h
+@@ -24,6 +24,12 @@
+  */
+ #define CVMX_PCIE_BAR1_RC_BASE (1ull << 41)
+
++extern int octeon_pci_pcibios_map_irq(const struct pci_dev *dev, u8 slot,
++				      u8 pin);
++
++extern int octeon_pcie_pcibios_map_irq(const struct pci_dev *dev, u8 slot,
++				       u8 pin);
++
+ /*
+  * pcibios_map_irq() is defined inside pci-octeon.c. All it does is
+  * call the Octeon specific version pointed to by this variable. This
+diff --git a/drivers/watchdog/octeon-wdt-main.c b/drivers/watchdog/octeon-wdt-main.c
+--- a/drivers/watchdog/octeon-wdt-main.c
++++ b/drivers/watchdog/octeon-wdt-main.c
+@@ -64,6 +64,8 @@
+ #include <asm/octeon/cvmx-ciu2-defs.h>
+ #include <asm/octeon/cvmx-rst-defs.h>
+
++#include "octeon-wdt-main.h"
++
+ /* Watchdog interrupt major block number (8 MSBs of intsn) */
+ #define WD_BLOCK_NUMBER		0x01
+
+diff --git a/drivers/watchdog/octeon-wdt-main.h b/drivers/watchdog/octeon-wdt-main.h
+new file mode 100644
+--- /dev/null
++++ b/drivers/watchdog/octeon-wdt-main.h
+@@ -0,0 +1,5 @@
++#ifdef CONFIG_OCTEON_WDT
++
++extern void octeon_wdt_nmi_stage3(u64 reg[32]);
++
++#endif
+--
+2.39.5
+

@@ -1,0 +1,40 @@
+From: VyOS SRX kernel build
+Subject: octeon: add missing prototype header for octeon-platform
+
+arch/mips/cavium-octeon/octeon-platform.c defines octeon_fill_mac_addresses
+with no prior prototype, which breaks -Werror=missing-prototypes. Add the
+header the shipping tree carries (vendor kernel
+arch/mips/include/asm/octeon/octeon-platform.h) and include it.
+
+---
+ arch/mips/cavium-octeon/octeon-platform.c            | 1 +
+ arch/mips/include/asm/octeon/octeon-platform.h       | 5 +++++
+ 2 files changed, 6 insertions(+)
+
+diff --git a/arch/mips/cavium-octeon/octeon-platform.c b/arch/mips/cavium-octeon/octeon-platform.c
+--- a/arch/mips/cavium-octeon/octeon-platform.c
++++ b/arch/mips/cavium-octeon/octeon-platform.c
+@@ -15,7 +15,8 @@
+ #include <linux/libfdt.h>
+ #include <linux/string.h>
+
+ #include <asm/octeon/octeon.h>
++#include <asm/octeon/octeon-platform.h>
+ #include <asm/octeon/cvmx-helper-board.h>
+
+ #if IS_ENABLED(CONFIG_USB)
+diff --git a/arch/mips/include/asm/octeon/octeon-platform.h b/arch/mips/include/asm/octeon/octeon-platform.h
+new file mode 100644
+--- /dev/null
++++ b/arch/mips/include/asm/octeon/octeon-platform.h
+@@ -0,0 +1,7 @@
++#ifndef __OCTEON_PLATFORM_H__
++#define __OCTEON_PLATFORM_H__
++
++extern void octeon_fill_mac_addresses(void);
++extern int ubnt_prune_device_tree(void);
++
++#endif
+--
+2.39.5
+

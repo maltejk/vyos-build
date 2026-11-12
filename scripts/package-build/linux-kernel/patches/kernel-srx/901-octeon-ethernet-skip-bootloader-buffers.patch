@@ -1,0 +1,20 @@
+--- a/drivers/staging/octeon/ethernet-rx.c
++++ b/drivers/staging/octeon/ethernet-rx.c
+@@ -255,6 +255,17 @@
+ 		skb_in_hw = work->word2.s.bufs == 1;
+ 		if (likely(skb_in_hw)) {
+ 			skb = *pskb;
++			if (unlikely(!skb)) {
++				/*
++				 * Buffer without an skb back pointer: came
++				 * from the bootloader and survived the drain
++				 * at init. Drop it and leak the buffer;
++				 * any flood of these indicates the init
++				 * drain (cvm_oct_quiesce_bootloader_io)
++				 * did not run.
++				 */
++				continue;
++			}
+ 			prefetch(&skb->head);
+ 			prefetch(&skb->len);
+ 		}
