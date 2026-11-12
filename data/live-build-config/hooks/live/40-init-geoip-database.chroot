@@ -4,6 +4,17 @@
 # License: https://creativecommons.org/licenses/by/4.0/ (CC BY 4.0)
 
 DATE_SUFFIX=$(date +%Y-%m)
+
+# SRX CI cache: the sqlite DB takes minutes to build under qemu-user. ci/image.sh
+# pre-seeds /var/cache/vyos with the DB of this month plus a stamp (month and
+# hash of the generator code); a matching stamp means the DB is current.
+DB=/var/cache/vyos/geoip-lookup.db
+STAMP=/var/cache/vyos/geoip-month
+KEY="$DATE_SUFFIX $(cat /usr/lib/python3/dist-packages/vyos/geoip.py /usr/libexec/vyos/geoip-update.py 2>/dev/null | sha256sum | cut -d' ' -f1)"
+if [ -s "$DB" ] && [ "$(cat $STAMP 2>/dev/null)" = "$KEY" ]; then
+    echo "I: GeoIP database cache hit ($DATE_SUFFIX), skipping download and import"
+    exit 0
+fi
 URL="https://download.db-ip.com/free/dbip-country-lite-${DATE_SUFFIX}.csv.gz"
 OUT_PATH="/usr/share/vyos-geoip/dbip-country-lite.csv.gz"
 
@@ -28,3 +39,8 @@ fi
 
 # Generate sqlite database
 python3 /usr/libexec/vyos/geoip-update.py --init
+
+# Mark the DB as current for ci/image.sh to cache (only if it holds rows)
+if [ "$(python3 -c "import sqlite3;print(sqlite3.connect('$DB').execute('select count(*) from geoip_ranges').fetchone()[0])" 2>/dev/null || echo 0)" -gt 0 ]; then
+    echo "$KEY" > $STAMP
+fi
