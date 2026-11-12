@@ -17,6 +17,7 @@
 
 import glob
 import shutil
+import time
 import sys
 import tomli
 import os
@@ -85,9 +86,22 @@ def build_package(package: list, patch_dir: Path) -> None:
     repo_dir = Path(repo_name)
 
     try:
-        # Clone the repository if it does not exist
+        # Clone the repository if it does not exist. Upstream forges
+        # (e.g. salsa.debian.org) occasionally drop the HTTP/2 stream
+        # mid-clone (curl 92, "early EOF"), so retry a few times before
+        # giving up.
         if not repo_dir.exists():
-            run(['git', 'clone', package['scm_url'], str(repo_dir)], check=True)
+            for attempt in range(1, 4):
+                try:
+                    run(['git', 'clone', package['scm_url'], str(repo_dir)], check=True)
+                    break
+                except CalledProcessError:
+                    if repo_dir.exists():
+                        shutil.rmtree(repo_dir, ignore_errors=True)
+                    if attempt == 3:
+                        raise
+                    print(f"Clone of '{repo_name}' failed (attempt {attempt}/3), retrying")
+                    time.sleep(10)
 
         # Check out the specific commit
         run(['git', 'checkout', package['commit_id']], cwd=repo_dir, check=True)
