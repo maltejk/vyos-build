@@ -1,0 +1,50 @@
+From e6980806136ecc62a31d7d3fd0d15413cb8dde34 Mon Sep 17 00:00:00 2001
+From: Agent <agent@vyos-srx.dev>
+Date: Sun, 8 Nov 2026 08:31:54 +0000
+Subject: [PATCH] Makefile: keep cgo in cross podman-release, native CC for
+ helpers
+
+---
+ Makefile | 10 ++++++----
+ 1 file changed, 6 insertions(+), 4 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index 7ea0da31e9..10172f323a 100644
+--- a/Makefile
++++ b/Makefile
+@@ -33,6 +33,9 @@ NATIVE_GOOS := $(shell env -u GOOS $(GO) env GOOS)
+ GOOS ?= $(call err_if_empty,NATIVE_GOOS)
+ # Default to the native architecture type
+ NATIVE_GOARCH := $(shell env -u GOARCH $(GO) env GOARCH)
++# Build-host C compiler for helpers that run during the build (docs, tools);
++# CC from the environment is the target (cross) compiler.
++NATIVE_CC ?= gcc
+ GOARCH ?= $(NATIVE_GOARCH)
+ COVERAGE_PATH ?= .coverage
+ DESTDIR ?=
+@@ -799,11 +802,10 @@ podman-release-%.tar.gz: test/version/version
+ 	$(eval _dstargs := "DESTDIR=$(tmpsubdir)/$(releasedir)" "PREFIX=$(RELEASE_PREFIX)")
+ 	$(eval GOARCH := $*)
+ 	mkdir -p "$(call err_if_empty,tmpsubdir)/$(releasedir)"
+-	$(MAKE) GOOS=$(GOOS) GOARCH=$(NATIVE_GOARCH) \
++	$(MAKE) GOOS=$(GOOS) GOARCH=$(NATIVE_GOARCH) CC=$(NATIVE_CC) \
+ 		clean-binaries docs podman-remote-$(GOOS)-docs
+ 	if [[ "$(GOARCH)" != "$(NATIVE_GOARCH)" ]]; then \
+-		$(MAKE) CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) \
+-			BUILDTAGS="$(BUILDTAGS_CROSS)" clean-binaries binaries; \
++		$(MAKE) GOOS=$(GOOS) GOARCH=$(GOARCH) clean-binaries binaries; \
+ 	else \
+ 		$(MAKE) GOOS=$(GOOS) GOARCH=$(GOARCH) binaries; \
+ 	fi
+@@ -997,7 +999,7 @@ endif
+ 
+ .PHONY: install.tools
+ install.tools: .install.golangci-lint ## Install needed tools
+-	$(MAKE) -C test/tools
++	$(MAKE) -C test/tools GOARCH=$(NATIVE_GOARCH) CC=$(NATIVE_CC)
+ 
+ .PHONY: .install.ginkgo
+ .install.ginkgo:
+-- 
+2.53.0
+
