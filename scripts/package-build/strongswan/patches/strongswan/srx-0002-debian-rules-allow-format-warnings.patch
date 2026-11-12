@@ -1,0 +1,11 @@
+--- a/debian/rules
++++ b/debian/rules
+@@ -1,4 +1,8 @@
+ #!/usr/bin/make -f
++
++# GCC does not know strongSwan custom printf specifiers (%V, %B, %Y, %R, %N);
++# keep format warnings as warnings, not errors (mips64el cross build fix).
++export DEB_CFLAGS_MAINT_APPEND=-Wno-error=format-extra-args -Wno-error=format= -Wno-error=format-zero-length -Wno-error=format-truncation
+ export DEB_LDFLAGS_MAINT_APPEND=-Wl,-O1
+ #export DEB_LDFLAGS_MAINT_APPEND=-Wl,--as-needed -Wl,-O1 -Wl,-z,defs
+ export DEB_BUILD_MAINT_OPTIONS=hardening=+all
