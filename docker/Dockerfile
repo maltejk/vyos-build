@@ -170,12 +170,14 @@ RUN apt-get update && apt-get install -y \
 COPY patches/live-build/0001-save-package-info.patch /tmp/0001-save-package-info.patch
 COPY patches/live-build/0002-live-build-support-mips64el.patch /tmp/0002-live-build-support-mips64el.patch
 COPY patches/live-build/0003-save-package-info-single-call.patch /tmp/0003-save-package-info-single-call.patch
+COPY patches/live-build/0004-binary-rootfs-host-mksquashfs.patch /tmp/0004-binary-rootfs-host-mksquashfs.patch
 
 RUN git clone https://salsa.debian.org/live-team/live-build.git /tmp/live-build && \
     cd /tmp/live-build && git checkout debian/1%20240810 && \
     patch -p1 < /tmp/0001-save-package-info.patch && \
     patch -p1 < /tmp/0002-live-build-support-mips64el.patch && \
     patch -p1 < /tmp/0003-save-package-info-single-call.patch && \
+    patch -p1 < /tmp/0004-binary-rootfs-host-mksquashfs.patch && \
     dch -n "Applying fix for save package info" && \
     dpkg-buildpackage -us -uc && \
     dpkg -i ../live-build*.deb && \
