@@ -1,0 +1,21 @@
+--- a/src/libstrongswan/credentials/certificates/certificate_printer.c
++++ b/src/libstrongswan/credentials/certificates/certificate_printer.c
+@@ -15,6 +15,12 @@
+  * for more details.
+  */
+ 
++
++/* strongSwan uses custom printf extension specifiers (%V, %B, %Y, %R) that
++ * GCC cannot parse; suppress all -Wformat diagnostics for this file. */
++#pragma GCC diagnostic push
++#pragma GCC diagnostic ignored "-Wformat-extra-args"
++#pragma GCC diagnostic ignored "-Wformat="
+ #include "certificate_printer.h"
+ #include "credentials/certificates/x509.h"
+ #include "credentials/certificates/crl.h"
+@@ -790,3 +796,5 @@
+ 
+ 	return &this->public;
+ }
++
++#pragma GCC diagnostic pop
