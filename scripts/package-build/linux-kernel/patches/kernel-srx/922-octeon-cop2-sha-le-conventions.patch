@@ -1,0 +1,480 @@
+
+--- a/arch/mips/include/asm/octeon/crypto.h	2026-10-30 12:06:41.000000000 +0000
++++ b/arch/mips/include/asm/octeon/crypto.h	2026-10-14 07:05:14.210444751 +0000
+@@ -8,6 +8,13 @@
+  * MD5/SHA1/SHA256/SHA512 instruction definitions added by
+  * Aaro Koskinen <aaro.koskinen@iki.fi>.
+  *
++ * Endianness: COP2 registers carry the big-endian byte stream of
++ * the hash state / message block as their raw 64-bit value. Hash state is
++ * kept as native u32/u64 words, so callers must compose state registers
++ * from u32 values (endian-neutral) and fetch message bytes with
++ * get_unaligned_be64(). Narrow hash dword registers (0x0048) take/return
++ * the composed u32 pair verbatim; wide registers (0x0250) take/return the
++ * u64 state word verbatim.
+  */
+ #ifndef __LINUX_OCTEON_CRYPTO_H
+ #define __LINUX_OCTEON_CRYPTO_H
+@@ -26,32 +33,33 @@
+  */
+ 
+ /*
+- * The index can be 0-1 (MD5) or 0-2 (SHA1), 0-3 (SHA256).
++ * The value is the hash state dword composed from native u32 words:
++ * (u64)h[2i] << 32 | h[2i+1]. The index can be 0-1 (MD5) or 0-2 (SHA1),
++ * 0-3 (SHA256).
+  */
+ #define write_octeon_64bit_hash_dword(value, index)	\
+ do {							\
+ 	__asm__ __volatile__ (				\
+ 	"dmtc2 %[rt],0x0048+" STR(index)		\
+ 	:						\
+-	: [rt] "d" (cpu_to_be64(value)));		\
++	: [rt] "d" (value));				\
+ } while (0)
+ 
+ /*
++ * Returns the hash state dword as (u64)h[2i] << 32 | h[2i+1].
+  * The index can be 0-1 (MD5) or 0-2 (SHA1), 0-3 (SHA256).
+  */
+ #define read_octeon_64bit_hash_dword(index)		\
+-({							\
+-	__be64 __value;					\
+-							\
++({	u64 __value;					\
+ 	__asm__ __volatile__ (				\
+ 	"dmfc2 %[rt],0x0048+" STR(index)		\
+ 	: [rt] "=d" (__value)				\
+ 	: );						\
+-							\
+-	be64_to_cpu(__value);				\
++	__value;					\
+ })
+ 
+ /*
++ * The value is the message block dword fetched with get_unaligned_be64().
+  * The index can be 0-6.
+  */
+ #define write_octeon_64bit_block_dword(value, index)	\
+@@ -59,111 +67,35 @@
+ 	__asm__ __volatile__ (				\
+ 	"dmtc2 %[rt],0x0040+" STR(index)		\
+ 	:						\
+-	: [rt] "d" (cpu_to_be64(value)));		\
++	: [rt] "d" (value));				\
+ } while (0)
+ 
+ /*
+- * The value is the final block dword (64-bit).
++ * The value is the final message block dword fetched with
++ * get_unaligned_be64().
+  */
+ #define octeon_md5_start(value)				\
+ do {							\
+ 	__asm__ __volatile__ (				\
++	"dmfc2 $0,0x0250\n"				\
+ 	"dmtc2 %[rt],0x4047"				\
+ 	:						\
+-	: [rt] "d" (cpu_to_be64(value)));		\
+-} while (0)
+-
+-/*
+- * The value is the final block dword (64-bit).
+- */
+-#define octeon_sha1_start(value)			\
+-do {							\
+-	__asm__ __volatile__ (				\
+-	"dmtc2 %[rt],0x4057"				\
+-	:						\
+-	: [rt] "d" (value));				\
+-} while (0)
+-
+-/*
+- * The value is the final block dword (64-bit).
+- */
+-#define octeon_sha256_start(value)			\
+-do {							\
+-	__asm__ __volatile__ (				\
+-	"dmtc2 %[rt],0x404f"				\
+-	:						\
+-	: [rt] "d" (value));				\
+-} while (0)
+-
+-/*
+- * Macros needed to implement SHA512:
+- */
+-
+-/*
+- * The index can be 0-7.
+- */
+-#define write_octeon_64bit_hash_sha512(value, index)	\
+-do {							\
+-	__asm__ __volatile__ (				\
+-	"dmtc2 %[rt],0x0250+" STR(index)		\
+-	:						\
+-	: [rt] "d" (value));				\
+-} while (0)
+-
+-/*
+- * The index can be 0-7.
+- */
+-#define read_octeon_64bit_hash_sha512(index)		\
+-({							\
+-	u64 __value;					\
+-							\
+-	__asm__ __volatile__ (				\
+-	"dmfc2 %[rt],0x0250+" STR(index)		\
+-	: [rt] "=d" (__value)				\
+-	: );						\
+-							\
+-	__value;					\
+-})
+-
+-/*
+- * The index can be 0-14.
+- */
+-#define write_octeon_64bit_block_sha512(value, index)	\
+-do {							\
+-	__asm__ __volatile__ (				\
+-	"dmtc2 %[rt],0x0240+" STR(index)		\
+-	:						\
+ 	: [rt] "d" (value));				\
+ } while (0)
+ 
+-/*
+- * The value is the final block word (64-bit).
+- */
+-#define octeon_sha512_start(value)			\
+-do {							\
+-	__asm__ __volatile__ (				\
+-	"dmtc2 %[rt],0x424f"				\
+-	:						\
+-	: [rt] "d" (value));				\
+-} while (0)
+-
+-/*
+- * The value is the final block dword (64-bit).
+- */
+ #define octeon_sha1_start(value)			\
+ do {							\
+ 	__asm__ __volatile__ (				\
++	"dmfc2 $0,0x0250\n"				\
+ 	"dmtc2 %[rt],0x4057"				\
+ 	:						\
+ 	: [rt] "d" (value));				\
+ } while (0)
+ 
+-/*
+- * The value is the final block dword (64-bit).
+- */
+ #define octeon_sha256_start(value)			\
+ do {							\
+ 	__asm__ __volatile__ (				\
++	"dmfc2 $0,0x0250\n"				\
+ 	"dmtc2 %[rt],0x404f"				\
+ 	:						\
+ 	: [rt] "d" (value));				\
+@@ -174,7 +106,7 @@
+  */
+ 
+ /*
+- * The index can be 0-7.
++ * The value is the native u64 hash state word. The index can be 0-7.
+  */
+ #define write_octeon_64bit_hash_sha512(value, index)	\
+ do {							\
+@@ -185,11 +117,10 @@
+ } while (0)
+ 
+ /*
+- * The index can be 0-7.
++ * Returns the native u64 hash state word. The index can be 0-7.
+  */
+ #define read_octeon_64bit_hash_sha512(index)		\
+-({							\
+-	u64 __value;					\
++({	u64 __value;					\
+ 							\
+ 	__asm__ __volatile__ (				\
+ 	"dmfc2 %[rt],0x0250+" STR(index)		\
+@@ -200,6 +131,7 @@
+ })
+ 
+ /*
++ * The value is the message block dword fetched with get_unaligned_be64().
+  * The index can be 0-14.
+  */
+ #define write_octeon_64bit_block_sha512(value, index)	\
+@@ -211,11 +143,13 @@
+ } while (0)
+ 
+ /*
+- * The value is the final block word (64-bit).
++ * The value is the final message block dword fetched with
++ * get_unaligned_be64().
+  */
+ #define octeon_sha512_start(value)			\
+ do {							\
+ 	__asm__ __volatile__ (				\
++	"dmfc2 $0,0x0250\n"				\
+ 	"dmtc2 %[rt],0x424f"				\
+ 	:						\
+ 	: [rt] "d" (value));				\
+--- a/lib/crypto/mips/sha256.h	2026-10-30 12:06:41.000000000 +0000
++++ b/lib/crypto/mips/sha256.h	2026-10-14 07:05:14.211049584 +0000
+@@ -14,6 +14,7 @@
+ 
+ #include <asm/octeon/crypto.h>
+ #include <asm/octeon/octeon.h>
++#include <linux/unaligned.h>
+ 
+ /*
+  * We pass everything as 64-bit. OCTEON can handle misaligned data.
+@@ -23,36 +24,42 @@
+ 			  const u8 *data, size_t nblocks)
+ {
+ 	struct octeon_cop2_state cop2_state;
+-	u64 *state64 = (u64 *)state;
+ 	unsigned long flags;
++	u64 r;
+ 
+ 	if (!octeon_has_crypto())
+ 		return sha256_blocks_generic(state, data, nblocks);
+ 
+ 	flags = octeon_crypto_enable(&cop2_state);
+-	write_octeon_64bit_hash_dword(state64[0], 0);
+-	write_octeon_64bit_hash_dword(state64[1], 1);
+-	write_octeon_64bit_hash_dword(state64[2], 2);
+-	write_octeon_64bit_hash_dword(state64[3], 3);
++	write_octeon_64bit_hash_dword(((u64)state->h[0] << 32) | state->h[1], 0);
++	write_octeon_64bit_hash_dword(((u64)state->h[2] << 32) | state->h[3], 1);
++	write_octeon_64bit_hash_dword(((u64)state->h[4] << 32) | state->h[5], 2);
++	write_octeon_64bit_hash_dword(((u64)state->h[6] << 32) | state->h[7], 3);
+ 
+ 	do {
+-		const u64 *block = (const u64 *)data;
+-
+-		write_octeon_64bit_block_dword(block[0], 0);
+-		write_octeon_64bit_block_dword(block[1], 1);
+-		write_octeon_64bit_block_dword(block[2], 2);
+-		write_octeon_64bit_block_dword(block[3], 3);
+-		write_octeon_64bit_block_dword(block[4], 4);
+-		write_octeon_64bit_block_dword(block[5], 5);
+-		write_octeon_64bit_block_dword(block[6], 6);
+-		octeon_sha256_start(block[7]);
++		write_octeon_64bit_block_dword(get_unaligned_be64(data), 0);
++		write_octeon_64bit_block_dword(get_unaligned_be64(data + 8), 1);
++		write_octeon_64bit_block_dword(get_unaligned_be64(data + 16), 2);
++		write_octeon_64bit_block_dword(get_unaligned_be64(data + 24), 3);
++		write_octeon_64bit_block_dword(get_unaligned_be64(data + 32), 4);
++		write_octeon_64bit_block_dword(get_unaligned_be64(data + 40), 5);
++		write_octeon_64bit_block_dword(get_unaligned_be64(data + 48), 6);
++		octeon_sha256_start(get_unaligned_be64(data + 56));
+ 
+ 		data += SHA256_BLOCK_SIZE;
+ 	} while (--nblocks);
+ 
+-	state64[0] = read_octeon_64bit_hash_dword(0);
+-	state64[1] = read_octeon_64bit_hash_dword(1);
+-	state64[2] = read_octeon_64bit_hash_dword(2);
+-	state64[3] = read_octeon_64bit_hash_dword(3);
++	r = read_octeon_64bit_hash_dword(0);
++	state->h[0] = r >> 32;
++	state->h[1] = (u32)r;
++	r = read_octeon_64bit_hash_dword(1);
++	state->h[2] = r >> 32;
++	state->h[3] = (u32)r;
++	r = read_octeon_64bit_hash_dword(2);
++	state->h[4] = r >> 32;
++	state->h[5] = (u32)r;
++	r = read_octeon_64bit_hash_dword(3);
++	state->h[6] = r >> 32;
++	state->h[7] = (u32)r;
+ 	octeon_crypto_disable(&cop2_state, flags);
+ }
+--- a/lib/crypto/mips/sha1.h	2026-10-30 12:06:41.000000000 +0000
++++ b/lib/crypto/mips/sha1.h	2026-10-14 07:05:14.211357292 +0000
+@@ -15,6 +15,7 @@
+ 
+ #include <asm/octeon/crypto.h>
+ #include <asm/octeon/octeon.h>
++#include <linux/unaligned.h>
+ 
+ /*
+  * We pass everything as 64-bit. OCTEON can handle misaligned data.
+@@ -22,31 +23,22 @@
+ 
+ static void octeon_sha1_store_hash(struct sha1_block_state *state)
+ {
+-	u64 *hash = (u64 *)&state->h[0];
+-	union {
+-		u32 word[2];
+-		u64 dword;
+-	} hash_tail = { { state->h[4], } };
+-
+-	write_octeon_64bit_hash_dword(hash[0], 0);
+-	write_octeon_64bit_hash_dword(hash[1], 1);
+-	write_octeon_64bit_hash_dword(hash_tail.dword, 2);
+-	memzero_explicit(&hash_tail.word[0], sizeof(hash_tail.word[0]));
++	write_octeon_64bit_hash_dword(((u64)state->h[0] << 32) | state->h[1], 0);
++	write_octeon_64bit_hash_dword(((u64)state->h[2] << 32) | state->h[3], 1);
++	write_octeon_64bit_hash_dword((u64)state->h[4] << 32, 2);
+ }
+ 
+ static void octeon_sha1_read_hash(struct sha1_block_state *state)
+ {
+-	u64 *hash = (u64 *)&state->h[0];
+-	union {
+-		u32 word[2];
+-		u64 dword;
+-	} hash_tail;
+-
+-	hash[0]		= read_octeon_64bit_hash_dword(0);
+-	hash[1]		= read_octeon_64bit_hash_dword(1);
+-	hash_tail.dword	= read_octeon_64bit_hash_dword(2);
+-	state->h[4]	= hash_tail.word[0];
+-	memzero_explicit(&hash_tail.dword, sizeof(hash_tail.dword));
++	u64 r0 = read_octeon_64bit_hash_dword(0);
++	u64 r1 = read_octeon_64bit_hash_dword(1);
++	u64 r2 = read_octeon_64bit_hash_dword(2);
++
++	state->h[0] = r0 >> 32;
++	state->h[1] = (u32)r0;
++	state->h[2] = r1 >> 32;
++	state->h[3] = (u32)r1;
++	state->h[4] = r2 >> 32;
+ }
+ 
+ static void sha1_blocks(struct sha1_block_state *state,
+@@ -62,16 +54,14 @@
+ 	octeon_sha1_store_hash(state);
+ 
+ 	do {
+-		const u64 *block = (const u64 *)data;
+-
+-		write_octeon_64bit_block_dword(block[0], 0);
+-		write_octeon_64bit_block_dword(block[1], 1);
+-		write_octeon_64bit_block_dword(block[2], 2);
+-		write_octeon_64bit_block_dword(block[3], 3);
+-		write_octeon_64bit_block_dword(block[4], 4);
+-		write_octeon_64bit_block_dword(block[5], 5);
+-		write_octeon_64bit_block_dword(block[6], 6);
+-		octeon_sha1_start(block[7]);
++		write_octeon_64bit_block_dword(get_unaligned_be64(data), 0);
++		write_octeon_64bit_block_dword(get_unaligned_be64(data + 8), 1);
++		write_octeon_64bit_block_dword(get_unaligned_be64(data + 16), 2);
++		write_octeon_64bit_block_dword(get_unaligned_be64(data + 24), 3);
++		write_octeon_64bit_block_dword(get_unaligned_be64(data + 32), 4);
++		write_octeon_64bit_block_dword(get_unaligned_be64(data + 40), 5);
++		write_octeon_64bit_block_dword(get_unaligned_be64(data + 48), 6);
++		octeon_sha1_start(get_unaligned_be64(data + 56));
+ 
+ 		data += SHA1_BLOCK_SIZE;
+ 	} while (--nblocks);
+--- a/lib/crypto/mips/sha512.h	2026-10-30 12:06:41.000000000 +0000
++++ b/lib/crypto/mips/sha512.h	2026-10-14 07:05:14.211597584 +0000
+@@ -15,6 +15,7 @@
+ 
+ #include <asm/octeon/crypto.h>
+ #include <asm/octeon/octeon.h>
++#include <linux/unaligned.h>
+ 
+ /*
+  * We pass everything as 64-bit. OCTEON can handle misaligned data.
+@@ -40,24 +41,22 @@
+ 	write_octeon_64bit_hash_sha512(state->h[7], 7);
+ 
+ 	do {
+-		const u64 *block = (const u64 *)data;
+-
+-		write_octeon_64bit_block_sha512(block[0], 0);
+-		write_octeon_64bit_block_sha512(block[1], 1);
+-		write_octeon_64bit_block_sha512(block[2], 2);
+-		write_octeon_64bit_block_sha512(block[3], 3);
+-		write_octeon_64bit_block_sha512(block[4], 4);
+-		write_octeon_64bit_block_sha512(block[5], 5);
+-		write_octeon_64bit_block_sha512(block[6], 6);
+-		write_octeon_64bit_block_sha512(block[7], 7);
+-		write_octeon_64bit_block_sha512(block[8], 8);
+-		write_octeon_64bit_block_sha512(block[9], 9);
+-		write_octeon_64bit_block_sha512(block[10], 10);
+-		write_octeon_64bit_block_sha512(block[11], 11);
+-		write_octeon_64bit_block_sha512(block[12], 12);
+-		write_octeon_64bit_block_sha512(block[13], 13);
+-		write_octeon_64bit_block_sha512(block[14], 14);
+-		octeon_sha512_start(block[15]);
++		write_octeon_64bit_block_sha512(get_unaligned_be64(data + 0), 0);
++		write_octeon_64bit_block_sha512(get_unaligned_be64(data + 8), 1);
++		write_octeon_64bit_block_sha512(get_unaligned_be64(data + 16), 2);
++		write_octeon_64bit_block_sha512(get_unaligned_be64(data + 24), 3);
++		write_octeon_64bit_block_sha512(get_unaligned_be64(data + 32), 4);
++		write_octeon_64bit_block_sha512(get_unaligned_be64(data + 40), 5);
++		write_octeon_64bit_block_sha512(get_unaligned_be64(data + 48), 6);
++		write_octeon_64bit_block_sha512(get_unaligned_be64(data + 56), 7);
++		write_octeon_64bit_block_sha512(get_unaligned_be64(data + 64), 8);
++		write_octeon_64bit_block_sha512(get_unaligned_be64(data + 72), 9);
++		write_octeon_64bit_block_sha512(get_unaligned_be64(data + 80), 10);
++		write_octeon_64bit_block_sha512(get_unaligned_be64(data + 88), 11);
++		write_octeon_64bit_block_sha512(get_unaligned_be64(data + 96), 12);
++		write_octeon_64bit_block_sha512(get_unaligned_be64(data + 104), 13);
++		write_octeon_64bit_block_sha512(get_unaligned_be64(data + 112), 14);
++		octeon_sha512_start(get_unaligned_be64(data + 120));
+ 
+ 		data += SHA512_BLOCK_SIZE;
+ 	} while (--nblocks);
+--- a/lib/crypto/mips/md5.h	2026-10-30 12:06:41.000000000 +0000
++++ b/lib/crypto/mips/md5.h	2026-10-14 07:05:14.211808751 +0000
+@@ -21,45 +21,20 @@
+ 
+ #include <asm/octeon/crypto.h>
+ #include <asm/octeon/octeon.h>
++#include <linux/unaligned.h>
+ 
+ /*
+  * We pass everything as 64-bit. OCTEON can handle misaligned data.
+  */
+ 
++/*
++ * OCTEON III (CN7xxx) dropped the MD5 COP2 unit: the dmtc2 0x4047 start
++ * never executes (narrow hash regs stay at IV | status, verified on
++ * CN7020, and the CN7130 reference kernel has no 0x4047 opcode). Use the
++ * generic implementation unconditionally.
++ */
+ static void md5_blocks(struct md5_block_state *state,
+ 		       const u8 *data, size_t nblocks)
+ {
+-	struct octeon_cop2_state cop2_state;
+-	u64 *state64 = (u64 *)state;
+-	unsigned long flags;
+-
+-	if (!octeon_has_crypto())
+-		return md5_blocks_generic(state, data, nblocks);
+-
+-	cpu_to_le32_array(state->h, ARRAY_SIZE(state->h));
+-
+-	flags = octeon_crypto_enable(&cop2_state);
+-	write_octeon_64bit_hash_dword(state64[0], 0);
+-	write_octeon_64bit_hash_dword(state64[1], 1);
+-
+-	do {
+-		const u64 *block = (const u64 *)data;
+-
+-		write_octeon_64bit_block_dword(block[0], 0);
+-		write_octeon_64bit_block_dword(block[1], 1);
+-		write_octeon_64bit_block_dword(block[2], 2);
+-		write_octeon_64bit_block_dword(block[3], 3);
+-		write_octeon_64bit_block_dword(block[4], 4);
+-		write_octeon_64bit_block_dword(block[5], 5);
+-		write_octeon_64bit_block_dword(block[6], 6);
+-		octeon_md5_start(block[7]);
+-
+-		data += MD5_BLOCK_SIZE;
+-	} while (--nblocks);
+-
+-	state64[0] = read_octeon_64bit_hash_dword(0);
+-	state64[1] = read_octeon_64bit_hash_dword(1);
+-	octeon_crypto_disable(&cop2_state, flags);
+-
+-	le32_to_cpu_array(state->h, ARRAY_SIZE(state->h));
++	md5_blocks_generic(state, data, nblocks);
+ }

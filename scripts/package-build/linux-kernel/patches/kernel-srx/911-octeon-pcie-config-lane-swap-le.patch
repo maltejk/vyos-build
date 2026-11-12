@@ -1,0 +1,80 @@
+--- a/arch/mips/pci/pcie-octeon.c	2026-10-04 17:10:03.492198006 +0000
++++ b/arch/mips/pci/pcie-octeon.c	2026-10-04 17:10:03.500836299 +0000
+@@ -296,6 +296,23 @@
+ 	return pcie_addr.u64;
+ }
+ 
++/*
++ * Octeon in little-endian mode (CvmCtl[1]): the hardware still delivers/accepts
++ * PCIe config data 64-bit byte-reversed, so sub-doubleword accesses need the
++ * address lane flipped (^ (8 - size)) and the value byte-swapped.
++ */
++#ifdef __LITTLE_ENDIAN
++#define CFG_LANE(a, n)	((a) ^ (8 - (n)))
++#define CFG_IN16(v)	swab16(v)
++#define CFG_IN32(v)	swab32(v)
++#else
++#define CFG_LANE(a, n)	(a)
++#define CFG_IN16(v)	le16_to_cpu(v)
++#define CFG_IN32(v)	le32_to_cpu(v)
++#endif
++#define CFG_OUT16(v)	CFG_IN16(v)
++#define CFG_OUT32(v)	CFG_IN32(v)
++
+ /**
+  * Read 8bits from a Device's config space
+  *
+@@ -313,7 +330,7 @@
+ 	uint64_t address =
+ 	    __cvmx_pcie_build_config_addr(pcie_port, bus, dev, fn, reg);
+ 	if (address)
+-		return cvmx_read64_uint8(address);
++		return cvmx_read64_uint8(CFG_LANE(address, 1));
+ 	else
+ 		return 0xff;
+ }
+@@ -335,7 +352,7 @@
+ 	uint64_t address =
+ 	    __cvmx_pcie_build_config_addr(pcie_port, bus, dev, fn, reg);
+ 	if (address)
+-		return le16_to_cpu(cvmx_read64_uint16(address));
++		return CFG_IN16(cvmx_read64_uint16(CFG_LANE(address, 2)));
+ 	else
+ 		return 0xffff;
+ }
+@@ -357,7 +374,7 @@
+ 	uint64_t address =
+ 	    __cvmx_pcie_build_config_addr(pcie_port, bus, dev, fn, reg);
+ 	if (address)
+-		return le32_to_cpu(cvmx_read64_uint32(address));
++		return CFG_IN32(cvmx_read64_uint32(CFG_LANE(address, 4)));
+ 	else
+ 		return 0xffffffff;
+ }
+@@ -378,7 +395,7 @@
+ 	uint64_t address =
+ 	    __cvmx_pcie_build_config_addr(pcie_port, bus, dev, fn, reg);
+ 	if (address)
+-		cvmx_write64_uint8(address, val);
++		cvmx_write64_uint8(CFG_LANE(address, 1), val);
+ }
+ 
+ /**
+@@ -397,7 +414,7 @@
+ 	uint64_t address =
+ 	    __cvmx_pcie_build_config_addr(pcie_port, bus, dev, fn, reg);
+ 	if (address)
+-		cvmx_write64_uint16(address, cpu_to_le16(val));
++		cvmx_write64_uint16(CFG_LANE(address, 2), CFG_OUT16(val));
+ }
+ 
+ /**
+@@ -416,7 +433,7 @@
+ 	uint64_t address =
+ 	    __cvmx_pcie_build_config_addr(pcie_port, bus, dev, fn, reg);
+ 	if (address)
+-		cvmx_write64_uint32(address, cpu_to_le32(val));
++		cvmx_write64_uint32(CFG_LANE(address, 4), CFG_OUT32(val));
+ }
+ 
+ /**

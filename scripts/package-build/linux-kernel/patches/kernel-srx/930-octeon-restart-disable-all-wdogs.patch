@@ -1,0 +1,55 @@
+octeon: clear CIU_WDOG of all cores before soft reset/halt (930)
+
+mips smp_send_stop() takes the secondary core offline before octeon_restart(),
+and CPU hotplug is unavailable here (cpu1/online missing), so the
+for_each_online_cpu() loop left WDOG1 (mode 3) armed over the SoC soft reset
+and reboot hung after "Restarting system" (~80% of reboots on SRX300, 2 cores,
+octeon_wdt active).  Clear all cores.  Verified 10/10 reboots, halt stays halted.
+
+--- a/arch/mips/cavium-octeon/setup.c
++++ b/arch/mips/cavium-octeon/setup.c
+@@ -423,6 +423,20 @@
+ 	write_octeon_c0_dcacheerr(0);
+ }
+ 
++/*
++ * Disable the watchdogs of ALL cores; they survive a soft reset.  After
++ * smp_send_stop() the other cores are offline, so for_each_online_cpu()
++ * would miss them and a still-armed WDOG would fire again after the
++ * reset and take down the bootloader.
++ */
++static void octeon_disable_all_wdogs(void)
++{
++	unsigned int core;
++
++	for (core = 0; core < cvmx_octeon_num_cores(); core++)
++		cvmx_write_csr(CVMX_CIU_WDOGX(core), 0);
++}
++
+ /**
+  * octeon_restart - Reboot Octeon
+  *
+@@ -430,14 +444,7 @@
+  */
+ static void octeon_restart(char *command)
+ {
+-	/* Disable all watchdogs before soft reset. They don't get cleared */
+-#ifdef CONFIG_SMP
+-	int cpu;
+-	for_each_online_cpu(cpu)
+-		cvmx_write_csr(CVMX_CIU_WDOGX(cpu_logical_map(cpu)), 0);
+-#else
+-	cvmx_write_csr(CVMX_CIU_WDOGX(cvmx_get_core_num()), 0);
+-#endif
++	octeon_disable_all_wdogs();
+ 
+ 	mb();
+ 	while (1)
+@@ -473,6 +480,7 @@
+  */
+ static void octeon_halt(void)
+ {
++	octeon_disable_all_wdogs();
+ 	smp_call_function(octeon_kill_core, NULL, 0);
+ 
+ 	switch (octeon_bootinfo->board_type) {

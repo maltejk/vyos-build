@@ -1,0 +1,60 @@
+--- a/arch/mips/cavium-octeon/executive/cvmx-helper-sgmii.c	2026-10-04 10:03:42.606075877 +0000
++++ b/arch/mips/cavium-octeon/executive/cvmx-helper-sgmii.c	2026-10-04 10:03:42.606579627 +0000
+@@ -30,6 +30,7 @@
+  * and monitoring.
+  */
+ 
++#include <linux/of.h>
+ #include <asm/octeon/octeon.h>
+ 
+ #include <asm/octeon/cvmx-config.h>
+@@ -41,6 +42,18 @@
+ #include <asm/octeon/cvmx-pcsx-defs.h>
+ #include <asm/octeon/cvmx-pcsxx-defs.h>
+ 
++
++/*
++ * Juniper SRX300: the only SGMII port (interface 0, index 0) is wired to a
++ * Broadcom BCM53343 switch ASIC. There is no PHY and no autonegotiation on
++ * the switch side, so the link is forced to 1000 Mbit/s full duplex
++ * (same PCS setup as the Junos U-Boot: MR_CONTROL = 0x140).
++ */
++static bool cvmx_sgmii_forced_link(void)
++{
++	return of_machine_is_compatible("juniper,srx300");
++}
++
+ /**
+  * Perform initialization required only once for an SGMII port.
+  *
+@@ -138,6 +151,16 @@
+ {
+ 	union cvmx_pcsx_mrx_control_reg control_reg;
+ 
++	if (cvmx_sgmii_forced_link()) {
++		control_reg.u64 = 0;
++		control_reg.s.dup = 1;
++		control_reg.s.spdmsb = 1;
++		control_reg.s.spdlsb = 0;
++		cvmx_write_csr(CVMX_PCSX_MRX_CONTROL_REG(index, interface),
++			       control_reg.u64);
++		return 0;
++	}
++
+ 	/*
+ 	 * Take PCS through a reset sequence.
+ 	 * PCS*_MR*_CONTROL_REG[PWR_DN] should be cleared to zero.
+@@ -404,6 +427,13 @@
+ 
+ 	result.u64 = 0;
+ 
++	if (cvmx_sgmii_forced_link()) {
++		result.s.link_up = 1;
++		result.s.full_duplex = 1;
++		result.s.speed = 1000;
++		return result;
++	}
++
+ 	if (cvmx_sysinfo_get()->board_type == CVMX_BOARD_TYPE_SIM) {
+ 		/* The simulator gives you a simulated 1Gbps full duplex link */
+ 		result.s.link_up = 1;

@@ -1,0 +1,63 @@
+--- a/drivers/staging/octeon/ethernet.c
++++ b/drivers/staging/octeon/ethernet.c
+@@ -137,10 +137,60 @@
+ 		schedule_delayed_work(&priv->port_periodic_work, HZ);
+ }
+ 
++/*
++ * A bootloader that used the network (Junos U-Boot/MDK) leaves packet I/O
++ * state behind: packets already routed into the POW, buffer pointers
++ * prefetched into the IPD free-pointer FIFOs and buffers in the FPA pools.
++ * None of them carry an skb back pointer. Quiesce and drain all of it before
++ * the driver fills the pools with skb-backed buffers, otherwise the first
++ * RX packets are lost or arrive with dangling buffer pointers. IPD must be
++ * off while draining (the helper re-enables it in
++ * cvmx_helper_initialize_packet_io_global()).
++ */
++static void cvm_oct_quiesce_bootloader_io(void)
++{
++	unsigned long nwork = 0;
++	static const int pools[] = {
++		CVMX_FPA_PACKET_POOL, CVMX_FPA_WQE_POOL,
++		CVMX_FPA_OUTPUT_BUFFER_POOL,
++	};
++	int i;
++
++	cvmx_ipd_disable();
++
++	/* Drain packets already routed into the POW by the bootloader. */
++	while (1) {
++		struct cvmx_wqe *work = cvmx_pow_work_request_sync(CVMX_POW_NO_WAIT);
++
++		if (!work)
++			break;
++		cvmx_helper_free_packet_data(work);
++		cvmx_fpa_free(work, CVMX_FPA_WQE_POOL, 0);
++		nwork++;
++	}
++
++	/* Return prefetched WQE/packet pointers from the IPD FIFOs to FPA. */
++	cvmx_ipd_free_ptr();
++
++	/* Drain the FPA pools completely before the driver refills them. */
++	for (i = 0; i < ARRAY_SIZE(pools); i++) {
++		int n = 0;
++
++		while (cvmx_fpa_alloc(pools[i]))
++			n++;
++		pr_info("octeon-ethernet: dropped %d bootloader buffers from FPA pool %d\n",
++			n, pools[i]);
++	}
++	if (nwork)
++		pr_info("octeon-ethernet: drained %lu stale bootloader packets from POW\n",
++			nwork);
++}
++
+ static void cvm_oct_configure_common_hw(struct platform_device *pdev)
+ {
+ 	/* Setup the FPA */
+ 	cvmx_fpa_enable();
++	cvm_oct_quiesce_bootloader_io();
+ 	cvm_oct_mem_fill_fpa(pdev, CVMX_FPA_PACKET_POOL, CVMX_FPA_PACKET_POOL_SIZE,
+ 			     num_packet_buffers);
+ 	cvm_oct_mem_fill_fpa(pdev, CVMX_FPA_WQE_POOL, CVMX_FPA_WQE_POOL_SIZE,

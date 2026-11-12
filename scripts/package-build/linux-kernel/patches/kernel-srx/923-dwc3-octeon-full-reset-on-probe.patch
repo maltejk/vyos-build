@@ -1,0 +1,43 @@
+dwc3-octeon: full UCTL reset on probe, clear H_CLK_EN first (923)
+
+U-Boot leaves the UAHC running (USBCMD.RS=1) when Linux takes over.
+dwc3_octeon_setup() asserts UPHY_RST+UAHC_RST+UCTL_RST in Step 3, but
+does so while H_CLK_EN is still set from U-Boot.  Asserting the SNPS
+core reset while the host clock is gated-on does not reliably quiesce
+the DWC3 IP; the controller can come up with HC-Died or SS-link
+instability on the first probe.
+
+The rescue unbind/rebind path in the initramfs works because
+xhci unbind stops the HC (USBCMD.RS=0) before the UCTL is re-probed,
+giving DWC3 a clean reset.  This patch reproduces that effect at probe
+time: clear H_CLK_EN, assert all three resets, wait 10 ms for PHY and
+PLL to power down, then let the normal init sequence run.
+
+Tested on CN7020-AAP SRX300 (rev 1.8 + 1.10) with Intenso USB3 stick
+(bcdUSB 3.10): HC-Died on K2 eliminated; K1 stochastic failure rate
+reduced.
+
+--- a/drivers/usb/dwc3/dwc3-octeon.c
++++ b/drivers/usb/dwc3/dwc3-octeon.c
+@@ -278,6 +278,22 @@
+ 	/* Step 2: Select GPIO for overcurrent indication, if desired. SKIP */
+
++	/*
++	 * Pre-probe reset: U-Boot may leave the UAHC running (USBCMD.RS=1).
++	 * Asserting resets while H_CLK_EN is set does not reliably quiesce
++	 * the SNPS IP core; clear the clock gate first and hold reset for
++	 * 10 ms so the PHY and PLL power down fully before normal init.
++	 * Mirrors the rescue unbind/rebind sequence in boot/live/init which
++	 * stops the HC before re-probing and reliably recovers the controller.
++	 */
++	val = dwc3_octeon_readq(uctl_ctl_reg);
++	val &= ~USBDRD_UCTL_CTL_H_CLK_EN;
++	val |= USBDRD_UCTL_CTL_UPHY_RST |
++	       USBDRD_UCTL_CTL_UAHC_RST |
++	       USBDRD_UCTL_CTL_UCTL_RST;
++	dwc3_octeon_writeq(uctl_ctl_reg, val);
++	usleep_range(10000, 11000);
++
+ 	/* Step 3: Assert all resets. */
+ 	val = dwc3_octeon_readq(uctl_ctl_reg);
+ 	val |= USBDRD_UCTL_CTL_UPHY_RST |
