@@ -170,7 +170,9 @@ make install.tools
 rm -rf podman-release-*.tar.gz podman-v*/
 make podman-release PREFIX=/usr
 
-tar xf podman-release-$(dpkg --print-architecture).tar.gz
+# GOARCH names differ from dpkg arch names (mips64le vs mips64el), and the
+# dpkg build arch is not the target in a cross build: take the one tarball.
+tar xf podman-release-*.tar.gz
 VERSION=$(ls -d podman-v* | cut -c9-)
 
 fpm --input-type dir --output-type deb --name podman \
