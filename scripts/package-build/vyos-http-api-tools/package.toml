@@ -1,0 +1,8 @@
+# packages.vyos.net builds vyos-http-api-tools with dh_virtualenv, which cannot
+# cross build; this recipe builds the same source and requirements.txt pins for
+# mips64el (patches/vyos-http-api-tools/).
+[[packages]]
+name = "vyos-http-api-tools"
+commit_id = "8f6b229dd927dd7226df1262062d99c7703ed9fc"
+scm_url = "https://github.com/vyos/vyos-http-api-tools.git"
+build_cmd = "dpkg-buildpackage -uc -us -tc -b -d"
