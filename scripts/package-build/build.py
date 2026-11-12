@@ -48,6 +48,16 @@ def apply_patches(repo_dir: Path, patch_dir: Path) -> None:
         print(f"I: No patches found in {patch_dir}")
         return
 
+    # Packages with a non-quilt (e.g. '1.0' native) source format ignore
+    # debian/patches entirely; apply those patches directly to the tree.
+    fmt_file = repo_dir / 'debian/source/format'
+    source_format = fmt_file.read_text().strip() if fmt_file.exists() else ''
+    if 'quilt' not in source_format:
+        for patch in patches:
+            print(f"I: Applying patch directly: {patch.name}")
+            run(["patch", "--batch", "-p1", "--forward", "-i", str(patch)], cwd=repo_dir)
+        return
+
     debian_patches_dir = repo_dir / 'debian/patches'
     debian_patches_dir.mkdir(parents=True, exist_ok=True)
 
