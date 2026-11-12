@@ -967,42 +967,56 @@ Pin-Priority: 600
     # If the flavor has `image_format = "iso"`, then the work is done.
     # If not, build additional flavors from the ISO.
     if build_config["image_format"] != ["iso"]:
-        # For all non-iso formats, we always build a raw image first
-        version_data, raw_image = raw_image.create_raw_image(build_config, iso_file, "tmp/")
-        manifest['artifacts'].append(raw_image)
+        # Formats with a dedicated hook script under scripts/image-build/hooks/
+        # are packed straight from the live-build output: they need no raw
+        # image stage. Only the remaining formats build a raw image first.
+        hook_formats = [f for f in build_config["image_format"]
+                        if os.path.isfile(os.path.join(os.path.dirname(__file__), 'hooks', f + '.sh'))]
+        raw_formats = [f for f in build_config["image_format"] if f not in hook_formats]
 
-        # If there are other formats in the flavor, the assumptions is that
-        # they can be produced from a raw image with `qemu-img convert`
-        other_formats = filter(lambda x: x not in ["iso", "raw"], build_config["image_format"])
-        for f in other_formats:
-            image_ext = build_config.get("image_ext", f)
-            image_opts = build_config.get("image_opts", "")
-            target = f"{os.path.splitext(raw_image)[0]}.{image_ext}"
-            print(f"I: Building {f} file {target}")
-            cmd(f"qemu-img convert -f raw -O {f} {image_opts} {raw_image} {target}")
+        for f in hook_formats:
+            hook = os.path.join(os.path.dirname(__file__), 'hooks', f + '.sh')
+            print(f"I: Running {f} image format hook: {hook}")
+            target = rc_cmd(f"{hook} {version_data['version']} {build_config['architecture']}")
             manifest['artifacts'].append(target)
 
-        # Finally, there are formats that require special procedures.
-        # For example, a VMware OVA needs a custom tool for image building and signing.
-        # For those cases, we support custom build hooks that run on raw images.
-        # A post-build hook is a script embedded in the flavor file
-        # that must return the artifact name via stdout.
-        if has_nonempty_key(build_config, "build_hook"):
-            hook_source = build_config["build_hook"]
+        if raw_formats:
+            # For all non-iso formats that need one, we build a raw image first
+            version_data, raw_image = raw_image.create_raw_image(build_config, iso_file, "tmp/")
+            manifest['artifacts'].append(raw_image)
 
-            with open('build_hook', 'w') as f:
-                f.write(hook_source)
-            os.chmod('build_hook', 0o755)
+            # If there are other formats in the flavor, the assumptions is that
+            # they can be produced from a raw image with `qemu-img convert`
+            other_formats = filter(lambda x: x not in ["iso", "raw"], raw_formats)
+            for f in other_formats:
+                image_ext = build_config.get("image_ext", f)
+                image_opts = build_config.get("image_opts", "")
+                target = f"{os.path.splitext(raw_image)[0]}.{image_ext}"
+                print(f"I: Building {f} file {target}")
+                cmd(f"qemu-img convert -f raw -O {f} {image_opts} {raw_image} {target}")
+                manifest['artifacts'].append(target)
 
-            if has_nonempty_key(build_config, "build_hook_opts"):
-                hook_opts = build_config["build_hook_opts"]
-            else:
-                hook_opts = ""
-            build_hook_command = f"./build_hook {raw_image} {version_data['version']} \
-              {build_config['architecture']} {hook_opts}"
-            print(f'I: executing build hook command: {build_hook_command}')
-            custom_image = rc_cmd(build_hook_command)
-            manifest['artifacts'].append(custom_image)
+            # Finally, there are formats that require special procedures.
+            # For example, a VMware OVA needs a custom tool for image building and signing.
+            # For those cases, we support custom build hooks that run on raw images.
+            # A post-build hook is a script embedded in the flavor file
+            # that must return the artifact name via stdout.
+            if has_nonempty_key(build_config, "build_hook"):
+                hook_source = build_config["build_hook"]
+
+                with open('build_hook', 'w') as f:
+                    f.write(hook_source)
+                os.chmod('build_hook', 0o755)
+
+                if has_nonempty_key(build_config, "build_hook_opts"):
+                    hook_opts = build_config["build_hook_opts"]
+                else:
+                    hook_opts = ""
+                build_hook_command = f"./build_hook {raw_image} {version_data['version']} \
+                  {build_config['architecture']} {hook_opts}"
+                print(f'I: executing build hook command: {build_hook_command}')
+                custom_image = rc_cmd(build_hook_command)
+                manifest['artifacts'].append(custom_image)
 
     # Filter out unwanted files from the artifact list
     # and leave only those the user specified
