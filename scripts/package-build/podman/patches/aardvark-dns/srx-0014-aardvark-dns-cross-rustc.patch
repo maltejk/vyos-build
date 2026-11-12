@@ -1,0 +1,43 @@
+Description: cross-build aardvark-dns with the srx-rust-cross toolchain
+ Use the nightly cross cargo in /opt/srx-rust instead of
+ the container's rustup shim.
+Author: VyOS SRX build automation
+---
+--- a/debian/rules
++++ b/debian/rules
+@@ -3,16 +3,33 @@
+ # VyOS builds on Debian bookworm, whose librust-*-dev / dh-cargo stack is far
+ # behind what this package needs, so we build directly against crates.io via
+ # the upstream Cargo.lock instead of Debian's offline vendored-crate scheme.
++# Cross-build for mips64el with the srx-rust-cross toolchain: native
++# nightly rustc/cargo of the build host arch under /opt/srx-rust (volume of
++# container srx-rust, see ci/rust-image.sh) emit mips64el code; std is built
++# (std is prebuilt in its sysroot). The container's own rustup shim has no default toolchain,
++# so call the cross cargo directly.
++CROSS_TARGET := mips64el-unknown-linux-gnuabi64
++SRXR := /opt/srx-rust
++CARGO := $(SRXR)/toolchain/bin/cargo
++export RUSTC := $(SRXR)/toolchain/bin/rustc
++export CARGO_BUILD_TARGET := $(CROSS_TARGET)
++export CARGO_TARGET_MIPS64EL_UNKNOWN_LINUX_GNUABI64_LINKER := $(SRXR)/bin/mips64el-linker
++export CC_mips64el_unknown_linux_gnuabi64 := $(SRXR)/bin/mips64el-clang
++# Host-side build scripts run inside the mips64el container (uname -m reports
++# the emulated arch there), so the host triple is recorded in the toolchain.
++HOST_TRIPLE := $(shell cat $(SRXR)/host-triple)
++export CARGO_TARGET_$(shell echo $(HOST_TRIPLE) | tr a-z- A-Z_)_LINKER := $(SRXR)/bin/host-linker
++
+ %:
+ 	dh $@
+ 
+ override_dh_auto_build:
+-	cargo build --release --bin aardvark-dns
++	$(CARGO) build --release --target $(CROSS_TARGET) --bin aardvark-dns
+ 
+ override_dh_auto_test:
+ 
+ override_dh_auto_install:
+-	install -D -m 0755 target/release/aardvark-dns debian/aardvark-dns/usr/lib/podman/aardvark-dns
++	install -D -m 0755 target/$(CROSS_TARGET)/release/aardvark-dns debian/aardvark-dns/usr/lib/podman/aardvark-dns
+ 
+ override_dh_auto_clean:
+ 	rm -rf target
