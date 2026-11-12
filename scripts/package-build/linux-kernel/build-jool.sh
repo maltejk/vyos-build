@@ -25,6 +25,18 @@ debmake -e support@vyos.io -f "VyOS Support" -p ${PACKAGE_NAME} -u ${PACKAGE_VER
 
 echo "misc:Depends=linux-image-${KERNEL_VERSION}${KERNEL_SUFFIX}" > ${PACKAGE_DIR}/debian/${PACKAGE_NAME}.substvars
 
+# debmake creates a 3.0 (quilt) source package: queue local patches in
+# debian/patches, dpkg-source applies them before the build
+PATCH_DIR=${CWD}/patches/${PACKAGE_NAME}
+if [ -d ${PATCH_DIR} ]; then
+    for patch in $(ls ${PATCH_DIR})
+    do
+        echo "I: Queue ${PACKAGE_NAME} patch: ${PATCH_DIR}/${patch}"
+        cp ${PATCH_DIR}/${patch} ${PACKAGE_DIR}/debian/patches/
+        echo ${patch} >> ${PACKAGE_DIR}/debian/patches/series
+    done
+fi
+
 cat << EOF > ${PACKAGE_DIR}/debian/rules
 #!/usr/bin/make -f
 # config
