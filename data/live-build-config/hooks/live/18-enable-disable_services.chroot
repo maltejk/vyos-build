@@ -70,7 +70,11 @@ systemctl enable vyos-hostsd.service
 systemctl enable acpid.service
 systemctl enable vyos-router.service
 systemctl enable vyos-configd.service
-systemctl enable vyos-grub-update.service
+# vyos-grub-update maintains the GRUB config structure; images without GRUB
+# (e.g. U-Boot platforms) have nothing to update
+if command -v grub-install >/dev/null; then
+    systemctl enable vyos-grub-update.service
+fi
 systemctl enable vyos-commitd.service
 
 echo I: Masking services
