@@ -12,8 +12,12 @@ fi
 # live-build's chroot_hacks regenerates the initramfs after all hooks, which
 # would run with the capabilities restored. Do it here instead and tell
 # live-build to skip it.
-echo "I: Regenerating initramfs before restoring file capabilities"
-update-initramfs -k all -t -u || exit 1
+if [ -e /etc/vyos-srx-no-initrd ]; then
+    echo "I: /etc/vyos-srx-no-initrd present, skipping initramfs"
+else
+    echo "I: Regenerating initramfs before restoring file capabilities"
+    update-initramfs -k all -t -u || exit 1
+fi
 touch /initrd.img_has_already_been_regenerated
 
 # mkinitramfs ignores modprobe failures - without squashfs the image is unbootable.
