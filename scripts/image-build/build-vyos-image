@@ -20,6 +20,20 @@
 import re
 import os
 import sys
+
+# Script directory captured at import time: build() chdirs into the build
+# directory, which breaks any later __file__-relative resolution. The script
+# may be invoked from the repository root (then the format hooks live under
+# scripts/image-build/) or from its own directory.
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_SCRIPT_HOOK_DIRS = [SCRIPT_DIR, os.path.join(SCRIPT_DIR, 'scripts/image-build')]
+
+def _format_hook_path(fmt: str) -> str:
+    for d in _SCRIPT_HOOK_DIRS:
+        p = os.path.join(d, 'hooks', fmt + '.sh')
+        if os.path.isfile(p):
+            return p
+    return ''
 import copy
 import uuid
 import glob
@@ -975,11 +989,11 @@ Pin-Priority: 600
         # are packed straight from the live-build output: they need no raw
         # image stage. Only the remaining formats build a raw image first.
         hook_formats = [f for f in build_config["image_format"]
-                        if os.path.isfile(os.path.join(os.path.dirname(__file__), 'hooks', f + '.sh'))]
+                        if _format_hook_path(f)]
         raw_formats = [f for f in build_config["image_format"] if f not in hook_formats]
 
         for f in hook_formats:
-            hook = os.path.join(os.path.dirname(__file__), 'hooks', f + '.sh')
+            hook = _format_hook_path(f)
             print(f"I: Running {f} image format hook: {hook}")
             target = rc_cmd(f"{hook} {version_data['version']} {build_config['architecture']}")
             manifest['artifacts'].append(target)
