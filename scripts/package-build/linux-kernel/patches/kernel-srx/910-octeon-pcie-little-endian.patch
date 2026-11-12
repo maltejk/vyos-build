@@ -1,0 +1,55 @@
+--- a/arch/mips/pci/pcie-octeon.c	2026-10-04 12:15:11.595203272 +0000
++++ b/arch/mips/pci/pcie-octeon.c	2026-10-04 12:15:11.608368328 +0000
+@@ -39,6 +39,7 @@
+ 
+ union cvmx_pcie_address {
+ 	uint64_t u64;
++#ifdef __BIG_ENDIAN_BITFIELD
+ 	struct {
+ 		uint64_t upper:2;	/* Normally 2 for XKPHYS */
+ 		uint64_t reserved_49_61:13;	/* Must be zero */
+@@ -90,6 +91,44 @@
+ 		uint64_t reserved_36_39:4;	/* Must be zero */
+ 		uint64_t address:36;	/* PCIe Mem address */
+ 	} mem;
++#else /* little endian bitfield order: fields from the least significant bit */
++	struct {
++		uint64_t reg:12;
++		uint64_t func:3;
++		uint64_t dev:5;
++		uint64_t bus:8;
++		uint64_t ty:1;
++		uint64_t reserved_29_31:3;
++		uint64_t port:2;
++		uint64_t es:2;
++		uint64_t reserved_36_39:4;
++		uint64_t subdid:3;
++		uint64_t did:5;
++		uint64_t io:1;
++		uint64_t reserved_49_61:13;
++		uint64_t upper:2;
++	} config;
++	struct {
++		uint64_t address:32;
++		uint64_t port:2;
++		uint64_t es:2;
++		uint64_t reserved_36_39:4;
++		uint64_t subdid:3;
++		uint64_t did:5;
++		uint64_t io:1;
++		uint64_t reserved_49_61:13;
++		uint64_t upper:2;
++	} io;
++	struct {
++		uint64_t address:36;
++		uint64_t reserved_36_39:4;
++		uint64_t subdid:3;
++		uint64_t did:5;
++		uint64_t io:1;
++		uint64_t reserved_49_61:13;
++		uint64_t upper:2;
++	} mem;
++#endif
+ };
+ 
+ static int cvmx_pcie_rc_initialize(int pcie_port);
