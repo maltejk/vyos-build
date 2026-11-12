@@ -2,6 +2,7 @@
 name = "netavark"
 commit_id = "debian/1.14.0-2"
 scm_url = "https://salsa.debian.org/debian/netavark"
+build_cmd = "dpkg-buildpackage -uc -us -tc -b -d"
 
 # The Debian packaging for netavark targets trixie/sid: it builds via dh-cargo
 # against a wall of librust-*-dev packages that don't exist in the bookworm
@@ -89,23 +90,14 @@ override_dh_auto_clean:
 EOF
 chmod 0755 debian/rules
 
-# bookworm's rustc (1.63) predates netavark's rust-version = "1.76"; install a
-# current stable toolchain and shadow any apt-installed one via /usr/local/bin,
-# which every later shell invocation in this build picks up ahead of /usr/bin.
-if [ ! -x "$HOME/.cargo/bin/rustup" ]; then
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
-else
-    "$HOME/.cargo/bin/rustup" update stable
-fi
-sudo ln -sf "$HOME/.cargo/bin/cargo" /usr/local/bin/cargo
-sudo ln -sf "$HOME/.cargo/bin/rustc" /usr/local/bin/rustc
-sudo ln -sf "$HOME/.cargo/bin/rustup" /usr/local/bin/rustup
+# The rust toolchain comes from the srx-rust sidecar (/opt/srx-rust), no rustup here.
 """
 
 [[packages]]
 name = "aardvark-dns"
 commit_id = "debian/1.14.0-3"
 scm_url = "https://salsa.debian.org/debian/aardvark-dns"
+build_cmd = "dpkg-buildpackage -uc -us -tc -b -d"
 
 # aardvark-dns and netavark are versioned in lockstep upstream (this
 # aardvark-dns Depends: netavark (>> 1.14)) and share the same trixie-only
@@ -159,14 +151,7 @@ override_dh_auto_clean:
 EOF
 chmod 0755 debian/rules
 
-if [ ! -x "$HOME/.cargo/bin/rustup" ]; then
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
-else
-    "$HOME/.cargo/bin/rustup" update stable
-fi
-sudo ln -sf "$HOME/.cargo/bin/cargo" /usr/local/bin/cargo
-sudo ln -sf "$HOME/.cargo/bin/rustc" /usr/local/bin/rustc
-sudo ln -sf "$HOME/.cargo/bin/rustup" /usr/local/bin/rustup
+# The rust toolchain comes from the srx-rust sidecar (/opt/srx-rust), no rustup here.
 """
 
 [[packages]]
