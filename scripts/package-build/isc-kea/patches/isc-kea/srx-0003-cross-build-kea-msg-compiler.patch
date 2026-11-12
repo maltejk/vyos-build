@@ -1,0 +1,19 @@
+From: VyOS SRX build <noreply@localhost>
+Subject: meson: build kea-msg-compiler in cross builds too
+
+The cross guard skips kea-msg-compiler. Then TARGETS_GEN_MESSAGES stays empty
+and meson.build stops with "No messages to generate", and
+debian/isc-kea-dev.install misses usr/bin/kea-msg-compiler. Build it for the
+host (target) arch like a native build does; it only runs for the manual
+`messages` target. No change for native builds.
+
+--- a/src/lib/log/compiler/meson.build
++++ b/src/lib/log/compiler/meson.build
+@@ -1,7 +1,3 @@
+-if meson.is_cross_build()
+-    subdir_done()
+-endif
+-
+ KEA_MSG_COMPILER = executable(
+     'kea-msg-compiler',
+     'message.cc',
