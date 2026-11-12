@@ -1,4 +1,4 @@
 [[packages]]
 name = "vyos-1x"
-commit_id = "rolling"
-scm_url = "https://github.com/vyos/vyos-1x.git"
+commit_id = "srx300-rolling"
+scm_url = "https://github.com/maltejk/vyos-1x.git"
