@@ -33,3 +33,9 @@ packages = ["vyos-srx-platform", "linux-image-6.18.60-srx"]
   components = "main"
   no_source = true
   key = "mDMEasiZ/xYJKwYBBAHaRw8BAQdA7rCMXF3tf4tt/qlk8DxAnCncowCG13HkE6KjqKVeOHy0J1NSWCBWeU9TIFBvcnQgUmVwbyA8c3J4LXJlcG9AbG9jYWxob3N0PoiQBBMWCgA4FiEEd4W2deXf0rBUsOdhHDFXKjF8w0wFAmrImf8CGwMFCwkIBwIGFQoJCAsCBBYCAwECHgECF4AACgkQHDFXKjF8w0ypNQD/T/DobVYqdg+eCLvmI0Y3mUklLm+fnAeCUxHDlM9MYN0A/3kJhfqu7p3iNS0IQt2MJAlPRtW0xLpNj3r+GFrNoz8M"
+
+# Marker read by the 17/99/19 live hooks: no initramfs is generated (the SRX
+# kernel has squashfs built in and srxslot boots without an initrd).
+[[includes_chroot]]
+  path = "etc/vyos-srx-no-initrd"
+  data = ""

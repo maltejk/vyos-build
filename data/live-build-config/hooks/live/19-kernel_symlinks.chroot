@@ -2,7 +2,7 @@
 
 echo I: Creating Linux Kernel symbolic links
 cd /boot
-ln -s initrd.img-* initrd.img
+[ -e /etc/vyos-srx-no-initrd ] || ln -s initrd.img-* initrd.img
 ln -s vmlinuz-* vmlinuz
 
 echo I: Remove Linux Kernel symbolic link to source folder
