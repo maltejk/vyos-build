@@ -1,0 +1,46 @@
+From 0fdf46747da3a9f1a767b41cfac4e1b3f21ce4b1 Mon Sep 17 00:00:00 2001
+From: SRX build agent <agent@vyos-srx.invalid>
+Date: Mon, 2 Nov 2026 14:12:26 +0000
+Subject: [PATCH] Makefile: add mips64el deb target support
+
+---
+ Makefile | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/Makefile b/Makefile
+index 97804e0f2..f7d42ffbb 100644
+--- a/Makefile
++++ b/Makefile
+@@ -286,6 +286,10 @@ mipsel += mipsel.deb linux_mipsel.tar.gz
+ .PHONY: mipsel
+ mipsel:
+ 	@ echo $(mipsel)
++mips64el += mips64el.deb
++.PHONY: mips64el
++mips64el:
++	@ echo $(mips64el)
+ arm64 += linux_arm64.tar.gz arm64.deb aarch64.rpm
+ .PHONY: arm64
+ arm64:
+@@ -332,7 +336,7 @@ darwin-arm64 += darwin_arm64.tar.gz
+ darwin-arm64:
+ 	@ echo $(darwin-arm64)
+ 
+-include_packages := $(mips) $(mipsel) $(arm64) $(amd64) $(armel) $(armhf) $(riscv64) $(s390x) $(ppc64le) $(i386) $(windows) $(darwin-amd64) $(darwin-arm64)
++include_packages := $(mips) $(mipsel) $(mips64el) $(arm64) $(amd64) $(armel) $(armhf) $(riscv64) $(s390x) $(ppc64le) $(i386) $(windows) $(darwin-amd64) $(darwin-arm64)
+ 
+ .PHONY: package
+ package: docs config $(include_packages)
+@@ -425,6 +429,9 @@ mips.deb linux_mips.tar.gz: export GOARCH := mips
+ mipsel.deb linux_mipsel.tar.gz: export GOOS := linux
+ mipsel.deb linux_mipsel.tar.gz: export GOARCH := mipsle
+ 
++mips64el.deb: export GOOS := linux
++mips64el.deb: export GOARCH := mips64le
++
+ riscv64.deb riscv64.rpm linux_riscv64.tar.gz: export GOOS := linux
+ riscv64.deb riscv64.rpm linux_riscv64.tar.gz: export GOARCH := riscv64
+ 
+-- 
+2.53.0
+
