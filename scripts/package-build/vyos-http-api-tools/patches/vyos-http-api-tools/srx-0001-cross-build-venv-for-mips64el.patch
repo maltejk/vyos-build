@@ -1,0 +1,140 @@
+diff --git a/debian/control b/debian/control
+index b5c880b..c738be5 100644
+--- a/debian/control
++++ b/debian/control
+@@ -5,9 +5,11 @@ Maintainer: VyOS Package Maintainers <maintainers@vyos.net>
+ Build-Depends: debhelper (>= 10),
+   python3,
+   python3-setuptools,
+-  dh-virtualenv (>= 1.0),
+   python3-pip,
+-  python3-venv
++  python3-venv,
++  curl,
++  libpython3.11-dev,
++  libyaml-dev
+ Standards-Version: 3.9.6
+ 
+ Package: vyos-http-api-tools
+@@ -15,7 +17,7 @@ Architecture: any
+ Pre-Depends: dpkg (>= 1.16.1),
+   python3,
+   ${misc:Pre-Depends}
+-Depends: ${misc:Depends}
++Depends: ${misc:Depends}, ${shlibs:Depends}
+ Description: api tools for VyOS
+   api tools for VyOS
+ 
+diff --git a/debian/rules b/debian/rules
+index 5a07432..59d1e89 100755
+--- a/debian/rules
++++ b/debian/rules
+@@ -1,19 +1,22 @@
+ #!/usr/bin/make -f
+-
+-export DH_VIRTUALENV_INSTALL_ROOT=/usr/share
++# SRX: cross build for mips64el. dh_virtualenv cannot be used (it would pip install
++# build-arch wheels); debian/srx-build-venv.sh builds the same venv from
++# requirements.txt with target C extensions and cargo cross built Rust modules.
+ 
+ %:
+-	dh $@ --with python-virtualenv
++	dh $@
++
++override_dh_auto_build:
++	bash debian/srx-build-venv.sh $(CURDIR)/debian/venv-build
++
++override_dh_auto_install:
++	mkdir -p debian/vyos-http-api-tools/usr/share
++	cp -a debian/venv-build debian/vyos-http-api-tools/usr/share/vyos-http-api-tools
+ 
+-override_dh_virtualenv:
+-	# Temporary Debian 12 "Bookworm" fix
+-	sudo sed -i 's/getargspec/getfullargspec/' /usr/bin/dh_virtualenv
++override_dh_strip:
++	dh_strip --no-automatic-dbgsym
+ 
+-	dh_virtualenv \
+-	--python /usr/bin/python3 \
+-	--use-system-packages \
+-	--builtin-venv \
+-	--upgrade-pip \
+-	--extra-pip-arg "--ignore-installed" \
+-	--extra-pip-arg "--no-cache-dir"
++override_dh_dwz:
+ 
++override_dh_auto_clean:
++	rm -rf debian/venv-build
+diff --git a/debian/srx-build-venv.sh b/debian/srx-build-venv.sh
+new file mode 100755
+index 0000000..f54abaf
+--- /dev/null
++++ b/debian/srx-build-venv.sh
+@@ -0,0 +1,67 @@
++#!/bin/bash
++# srx-build-venv.sh <venv-dir>: build the vyos-http-api-tools venv for mips64el on a
++# build-arch host. Same content as upstream dh_virtualenv (requirements.txt, system
++# site packages, /usr/share/vyos-http-api-tools). The build python (arm64/amd64) runs
++# pip; native modules are built for the target:
++#  - C extensions from sdist with the target _sysconfigdata (cross gcc, libpython-dev:mips64el)
++#  - pydantic-core and watchfiles (Rust) with the srx-rust cross toolchain (/opt/srx-rust,
++#    ci/rust-image.sh); there are no mips64el wheels on PyPI.
++set -euo pipefail
++V=$1; REQ=$PWD/requirements.txt
++INSTALLED=/usr/share/vyos-http-api-tools
++T=mips64el-unknown-linux-gnuabi64
++NATIVE_C="httptools pyyaml uvloop websockets"
++NATIVE_RUST="pydantic-core watchfiles"
++W=$(mktemp -d); trap 'rm -rf "$W"' EXIT
++
++rm -rf "$V"; python3 -m venv --system-site-packages "$V"
++export PATH=$V/bin:$PATH
++pip install -q --upgrade pip
++SP=$($V/bin/python3 -c 'import sysconfig;print(sysconfig.get_paths()["purelib"])')
++pin() { sed -n "s/^$1==\([^ ]*\).*/\1/Ip" "$REQ"; }
++
++# pure python and C extensions (target sysconfigdata: cross gcc, EXT_SUFFIX mips64el)
++export _PYTHON_HOST_PLATFORM=linux-mips64 _PYTHON_SYSCONFIGDATA_NAME=_sysconfigdata__linux_mips64el-linux-gnuabi64
++nb=$(echo $NATIVE_C | tr ' ' ',')
++grep -ivE "^($(echo $NATIVE_RUST | tr ' ' '|'))==" "$REQ" | sed 's/\[standard\]//' | grep -E '^[A-Za-z]' \
++    > "$W/req.txt"
++pip install --no-deps --ignore-installed --no-cache-dir --no-binary "$nb" -r "$W/req.txt"
++unset _PYTHON_HOST_PLATFORM _PYTHON_SYSCONFIGDATA_NAME
++
++# Rust modules: cargo cross build of the PyPI sdist, copied in like a wheel install
++SRXR=/opt/srx-rust
++export RUSTC=$SRXR/toolchain/bin/rustc CARGO_BUILD_TARGET=$T PYO3_CROSS_PYTHON_VERSION=3.11
++export CARGO_TARGET_MIPS64EL_UNKNOWN_LINUX_GNUABI64_LINKER=$SRXR/bin/mips64el-linker
++export CC_mips64el_unknown_linux_gnuabi64=$SRXR/bin/mips64el-clang
++export "CARGO_TARGET_$(tr a-z- A-Z_ < $SRXR/host-triple)_LINKER=$SRXR/bin/host-linker"
++sdist() {  # name version -> extracted dir
++    python3 - "$1" "$2" "$W" <<'PY'
++import json, sys, tarfile, urllib.request, io
++n, v, w = sys.argv[1:]
++u = [x["url"] for x in json.load(urllib.request.urlopen(f"https://pypi.org/pypi/{n}/{v}/json"))["urls"] if x["packagetype"] == "sdist"][0]
++tarfile.open(fileobj=io.BytesIO(urllib.request.urlopen(u).read())).extractall(w)
++PY
++}
++ver=$(pin pydantic-core); sdist pydantic-core "$ver"; d=$W/pydantic_core-$ver
++pip install -q typing_extensions   # build.rs runs generate_self_schema.py (needs `deprecated`)
++(cd "$d" && $SRXR/toolchain/bin/cargo build --release --features pyo3/extension-module)
++mkdir -p "$SP/pydantic_core"
++cp "$d"/python/pydantic_core/*.py* "$d"/python/pydantic_core/py.typed "$SP/pydantic_core/"
++cp "$d/target/$T/release/lib_pydantic_core.so" "$SP/pydantic_core/_pydantic_core.cpython-311-mips64el-linux-gnuabi64.so"
++di=$SP/pydantic_core-$ver.dist-info; mkdir -p "$di"; cp "$d/PKG-INFO" "$di/METADATA"; echo pip > "$di/INSTALLER"; : > "$di/RECORD"
++ver=$(pin watchfiles); sdist watchfiles "$ver"; d=$W/watchfiles-$ver
++(cd "$d" && $SRXR/toolchain/bin/cargo build --release)
++cp -r "$d/watchfiles" "$SP/"
++cp "$d/target/$T/release/lib_rust_notify.so" "$SP/watchfiles/_rust_notify.cpython-311-mips64el-linux-gnuabi64.so"
++di=$SP/watchfiles-$ver.dist-info; mkdir -p "$di"; cp "$d/PKG-INFO" "$di/METADATA"; echo pip > "$di/INSTALLER"; : > "$di/RECORD"
++
++# python-pam: ctypes callbacks returning c_int are seen as failed by libpam on
++# mips64el (libffi closure return); c_long fixes pam.authenticate()
++sed -i 's/^conv_func = CFUNCTYPE(c_int,/conv_func = CFUNCTYPE(__import__("ctypes").c_long,/' "$SP/pam/__internals.py"
++grep -q 'c_long,' "$SP/pam/__internals.py"
++
++# relocate to the install path (dh_virtualenv does the same), bytecode for the install
++# path (first start of the API on the 1.2 GHz MIPS is >30 s without .pyc)
++grep -lI "$V" "$V"/bin/* "$V/pyvenv.cfg" | xargs -r sed -i "s|$V|$INSTALLED|g"
++find "$V" -name __pycache__ -prune -exec rm -rf {} +
++python3 -m compileall -q -s "$V" -p "$INSTALLED" "$V/lib"
