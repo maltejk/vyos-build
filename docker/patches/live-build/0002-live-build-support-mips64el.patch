@@ -1,0 +1,20 @@
+live-build (salsa live-team, debian/1%20240810) only maps Linux flavours for
+a fixed set of architectures and errors out on everything else. Add mips64el
+(octeon flavour) so the SRX mips64el slot image can be built. The default
+flavour is never used by the SRX build: the flavor toml passes
+--linux-flavours explicitly.
+
+--- a/functions/configuration.sh
++++ b/functions/configuration.sh
+@@ -258,6 +258,10 @@
+ 		s390x)
+ 			LB_LINUX_FLAVOURS_WITH_ARCH="${LB_LINUX_FLAVOURS_WITH_ARCH:-s390x}"
+ 			;;
+
++		mips64el)
++			LB_LINUX_FLAVOURS_WITH_ARCH="${LB_LINUX_FLAVOURS_WITH_ARCH:-octeon}"
++			;;
++
+ 		*)
+ 			Echo_error "Architecture(s) ${LB_ARCHITECTURE} not yet supported (FIXME)"
+ 			exit 1
