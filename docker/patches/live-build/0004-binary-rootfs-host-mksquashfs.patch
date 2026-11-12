@@ -1,0 +1,85 @@
+diff --git a/scripts/build/binary_rootfs b/scripts/build/binary_rootfs
+index 080ee15..3572311 100755
+--- a/scripts/build/binary_rootfs
++++ b/scripts/build/binary_rootfs
+@@ -261,14 +261,26 @@ case "${LB_CHROOT_FILESYSTEM}" in
+ 		;;
+ 
+ 	squashfs)
+-		# Checking depends
+-		Check_package chroot /usr/share/doc/squashfs-tools squashfs-tools
+-
+-		# Restoring cache
+-		Restore_package_cache binary
+-
+-		# Installing depends
+-		Install_packages
++		# The builder runs mksquashfs natively on the host (same squashfs-tools
++		# as the chroot would get); the chroot may be a foreign architecture
++		# under qemu-user, where compression is several times slower.
++		if [ "${LB_BUILD_WITH_CHROOT}" = "true" ]
++		then
++			if ! command -v mksquashfs >/dev/null 2>&1
++			then
++				Echo_error "mksquashfs not found on the build host (install squashfs-tools)"
++				exit 1
++			fi
++		else
++			# Checking depends
++			Check_package chroot /usr/share/doc/squashfs-tools squashfs-tools
++
++			# Restoring cache
++			Restore_package_cache binary
++
++			# Installing depends
++			Install_packages
++		fi
+ 
+ 		Echo_message "Preparing squashfs image..."
+ 		Echo_message "This may take a while."
+@@ -297,17 +309,7 @@ case "${LB_CHROOT_FILESYSTEM}" in
+ 
+ 		if [ -f config/rootfs/squashfs.sort ]
+ 		then
+-			MKSQUASHFS_OPTIONS="-sort squashfs.sort ${MKSQUASHFS_OPTIONS}"
+-
+-			case "${LB_BUILD_WITH_CHROOT}" in
+-				true)
+-					cp -a config/rootfs/squashfs.sort chroot
+-					;;
+-
+-				false)
+-					cp -a config/rootfs/squashfs.sort .
+-					;;
+-			esac
++			MKSQUASHFS_OPTIONS="-sort config/rootfs/squashfs.sort ${MKSQUASHFS_OPTIONS}"
+ 		fi
+ 
+ 		# Set squashfs compression type or default to xz
+@@ -327,22 +329,12 @@ case "${LB_CHROOT_FILESYSTEM}" in
+ 			true)
+ 				if [ -e config/rootfs/excludes ]
+ 				then
+-					cp -a config/rootfs/excludes chroot/excludes
+-
+-					MKSQUASHFS_OPTIONS="-wildcards -ef /excludes ${MKSQUASHFS_OPTIONS}"
++					MKSQUASHFS_OPTIONS="-wildcards -ef config/rootfs/excludes ${MKSQUASHFS_OPTIONS}"
+ 				fi
+ 
+-				# Create image
+-				Chroot chroot "nice -n 17 mksquashfs chroot filesystem.squashfs ${MKSQUASHFS_OPTIONS}"
+-
+-				rm -f chroot/excludes
+-
+-				# Move image
+-				mv chroot/filesystem.squashfs binary/${INITFS}
+-				rm -f chroot/squashfs.sort
+-
+-				# Removing depends
+-				Remove_packages
++				# Create image on the host from the chroot tree (xattrs, incl.
++				# security.capability, are read and stored by default; needs root)
++				nice -n 17 mksquashfs chroot/chroot binary/${INITFS}/filesystem.squashfs ${MKSQUASHFS_OPTIONS}
+ 
+ 				if [ -e chroot/chroot.cache ]
+ 				then
