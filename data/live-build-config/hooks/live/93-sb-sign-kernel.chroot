@@ -1,6 +1,14 @@
 #!/bin/sh
 
 SIGN_FILE=$(find /usr/lib -name sign-file)
+
+# Skip entirely when no signing infrastructure is configured (flavors without
+# Secure Boot, e.g. U-Boot-booted slot images with unsigned kernel modules).
+if [ -z "$SIGN_FILE" ] || [ ! -e /var/lib/shim-signed/mok ]; then
+    echo "I: no kernel signing key/cert found, skipping Secure Boot kernel signing"
+    exit 0
+fi
+
 CA_YEAR="$(date +%Y)"
 KERNEL_KEY="/var/lib/shim-signed/mok/vyos-dev-${CA_YEAR}-linux.key"
 KERNEL_CERT="/var/lib/shim-signed/mok/vyos-dev-${CA_YEAR}-linux.pem"
