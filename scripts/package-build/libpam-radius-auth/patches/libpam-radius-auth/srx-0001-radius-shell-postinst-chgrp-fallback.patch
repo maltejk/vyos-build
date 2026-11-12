@@ -1,0 +1,24 @@
+Description: radius-shell postinst: fall back to numeric gid for chgrp
+ On emulated build hosts (qemu-user mips64el), the `chgrp users` call
+ dies with SIGBUS while resolving the group name through NSS (the
+ tacplus NSS module loaded by the upstream nsswitch.conf crashes under
+ qemu-user emulation). A SIGBUS in the chgrp child leaves the shell
+ intact, so fall back to the numeric users gid (100 on Debian) when the
+ named chgrp fails. On real hardware the named chgrp succeeds and the
+ fallback never runs.
+Author: Agent <agent@vyos-srx.dev>
+Forwarded: no (emulation-only workaround)
+
+---
+--- a/debian/vyos-radius-shell.postinst
++++ b/debian/vyos-radius-shell.postinst
+@@ -9,7 +9,8 @@
+     configure)
+         radshell=/sbin/radius_shell
+         chmod 750 $radshell
+-        chgrp users $radshell
++        chgrp users $radshell || \
++            chgrp 100 $radshell # qemu-user: NSS group lookup SIGBUSes
+         setcap  cap_setuid+ep $radshell
+         # The users will have been created by the libnss-mapuser package
+         # and possibly by an older version, so change the shells here.
