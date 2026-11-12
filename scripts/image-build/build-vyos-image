@@ -856,112 +856,116 @@ Pin-Priority: 600
         manifest['artifacts'].append(iso_file)
 
         # Now create SBOM
-        base_filename = iso_file.rstrip('.iso')
-        syft_target_dir = tempfile.mkdtemp(prefix='unsquashfs_rootfs-', dir=os.getcwd())
-        syft_base_path = syft_target_dir
-        try:
-            # lb config builds the amd64 squashfs as xz with -Xbcj x86 (a BCJ pre-filter
-            # chained with LZMA2. Real unsquashfs/mksquashfs fully support multi-filter
-            # xz streams; syft's own Go-based squashfs/xz decoder apparently only handles
-            # plain single-filter. Extract squashfs first
-            print("I: Unpack squashfs for SBOM generation")
-            unsquashfs_cmd = ['unsquashfs', '-quiet', '-no-progress', '-force', '-dest', syft_target_dir, 'binary/live/filesystem.squashfs']
-            with subprocess.Popen(unsquashfs_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                  text=True, bufsize=1) as p:
-                for line in p.stdout:
-                    sys.stdout.write(line)
-                    sys.stdout.flush()
-                if p.wait() != 0:
-                    raise ImageBuildError(
-                        f'SBOM command failed with exit status {p.returncode}: {" ".join(unsquashfs_cmd)}'
-                    )
-
-            # VyOS declares ID=vyos with no ID_LIKE, therefore Syft can't detect the system correctly
-            with open(os.path.join(syft_target_dir, 'etc/os-release'), 'a') as f:
-                f.write('ID_LIKE=debian\n')
-
-            syft_base_flags = ['--base-path', syft_target_dir,
-                                '--exclude', './__w/**',
-                                '--exclude', '**/external_libs/**',
-                                '--source-name', 'VyOS', '--source-version', version]
-
-            # Specify Syft variables to reduce CycloneDX file size
-            cdx_env = os.environ.copy()
-            cdx_env['SYFT_FILE_METADATA_SELECTION'] = 'none'
-            cdx_env['SYFT_RELATIONSHIPS_PACKAGE_FILE_OWNERSHIP'] = 'false'
-
-            # SPDX keeps its defaults (full file cataloguing and ownership relationships).
-            spdx_env = os.environ.copy()
-
-            syft_cmd = [
-                (['syft', 'scan', f'dir:{syft_target_dir}', *syft_base_flags,
-                  '-o', f'cyclonedx-json@1.6={base_filename}.cdx.json'], cdx_env),
-                (['syft', 'scan', f'dir:{syft_target_dir}', *syft_base_flags,
-                  '-o', f'spdx-json={base_filename}.spdx.json'], spdx_env),
-                # syft bug for CycloneDX https://github.com/anchore/syft/issues/4592#issuecomment-4567247328
-                (['sed', '-i', '-e', f's@{syft_base_path}@@g', f'{base_filename}.cdx.json'], None),
-                (['sed', '-i', '-e', f's@{syft_base_path}@//@g', f'{base_filename}.spdx.json'], None),
-            ]
-
-            for c, e in syft_cmd:
-                with subprocess.Popen(c, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                      text=True, bufsize=1, env=e) as p:
+        if not shutil.which('syft'):
+            print("I: syft not installed, skipping SBOM generation")
+        else:
+            # Now create SBOM
+            base_filename = iso_file.rstrip('.iso')
+            syft_target_dir = tempfile.mkdtemp(prefix='unsquashfs_rootfs-', dir=os.getcwd())
+            syft_base_path = syft_target_dir
+            try:
+                # lb config builds the amd64 squashfs as xz with -Xbcj x86 (a BCJ pre-filter
+                # chained with LZMA2. Real unsquashfs/mksquashfs fully support multi-filter
+                # xz streams; syft's own Go-based squashfs/xz decoder apparently only handles
+                # plain single-filter. Extract squashfs first
+                print("I: Unpack squashfs for SBOM generation")
+                unsquashfs_cmd = ['unsquashfs', '-quiet', '-no-progress', '-force', '-dest', syft_target_dir, 'binary/live/filesystem.squashfs']
+                with subprocess.Popen(unsquashfs_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                      text=True, bufsize=1) as p:
                     for line in p.stdout:
                         sys.stdout.write(line)
                         sys.stdout.flush()
                     if p.wait() != 0:
                         raise ImageBuildError(
-                            f'SBOM command failed with exit status {p.returncode}: {" ".join(c)}'
+                            f'SBOM command failed with exit status {p.returncode}: {" ".join(unsquashfs_cmd)}'
                         )
 
-            # Add metadata.authors/supplier/lifecycles information to the SBOM file
-            cdx_file = f'{base_filename}.cdx.json'
-            with open(cdx_file) as f:
-                cdx = json.load(f)
+                # VyOS declares ID=vyos with no ID_LIKE, therefore Syft can't detect the system correctly
+                with open(os.path.join(syft_target_dir, 'etc/os-release'), 'a') as f:
+                    f.write('ID_LIKE=debian\n')
 
-            vyos_author = {'name': 'VyOS maintainers and contributors', 'email': 'maintainers@vyos.io'}
-            vyos_supplier = {'name': 'VyOS Networks', 'url': [build_defaults['website_url']]}
-            go_authors_supplier = {'name': 'The Go Authors', 'url': ['https://go.dev']}
+                syft_base_flags = ['--base-path', syft_target_dir,
+                                    '--exclude', './__w/**',
+                                    '--exclude', '**/external_libs/**',
+                                    '--source-name', 'VyOS', '--source-version', version]
 
-            cdx['metadata']['authors'] = [vyos_author]
-            cdx['metadata']['supplier'] = vyos_supplier
+                # Specify Syft variables to reduce CycloneDX file size
+                cdx_env = os.environ.copy()
+                cdx_env['SYFT_FILE_METADATA_SELECTION'] = 'none'
+                cdx_env['SYFT_RELATIONSHIPS_PACKAGE_FILE_OWNERSHIP'] = 'false'
 
-            cdx['metadata']['lifecycles'] = [{'phase': 'build'}]
-            cdx['metadata']['licenses'] = [{'license': {'id': 'CC0-1.0'}}]
+                # SPDX keeps its defaults (full file cataloguing and ownership relationships).
+                spdx_env = os.environ.copy()
 
-            cdx['metadata']['component']['type'] = 'operating-system'
-            cdx['metadata']['component']['supplier'] = vyos_supplier
+                syft_cmd = [
+                    (['syft', 'scan', f'dir:{syft_target_dir}', *syft_base_flags,
+                      '-o', f'cyclonedx-json@1.6={base_filename}.cdx.json'], cdx_env),
+                    (['syft', 'scan', f'dir:{syft_target_dir}', *syft_base_flags,
+                      '-o', f'spdx-json={base_filename}.spdx.json'], spdx_env),
+                    # syft bug for CycloneDX https://github.com/anchore/syft/issues/4592#issuecomment-4567247328
+                    (['sed', '-i', '-e', f's@{syft_base_path}@@g', f'{base_filename}.cdx.json'], None),
+                    (['sed', '-i', '-e', f's@{syft_base_path}@//@g', f'{base_filename}.spdx.json'], None),
+                ]
 
-            # Add the correct component.supplier field.
-            for comp in cdx['components']:
-                supplier = component_supplier(comp, vyos_supplier, go_authors_supplier)
-                if supplier:
-                    comp['supplier'] = supplier
+                for c, e in syft_cmd:
+                    with subprocess.Popen(c, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                          text=True, bufsize=1, env=e) as p:
+                        for line in p.stdout:
+                            sys.stdout.write(line)
+                            sys.stdout.flush()
+                        if p.wait() != 0:
+                            raise ImageBuildError(
+                                f'SBOM command failed with exit status {p.returncode}: {" ".join(c)}'
+                            )
 
-            with open(cdx_file, 'w') as f:
-                json.dump(cdx, f)
+                # Add metadata.authors/supplier/lifecycles information to the SBOM file
+                cdx_file = f'{base_filename}.cdx.json'
+                with open(cdx_file) as f:
+                    cdx = json.load(f)
 
-            spdx_file = f'{base_filename}.spdx.json'
-            with open(spdx_file) as f:
-                spdx = json.load(f)
+                vyos_author = {'name': 'VyOS maintainers and contributors', 'email': 'maintainers@vyos.io'}
+                vyos_supplier = {'name': 'VyOS Networks', 'url': [build_defaults['website_url']]}
+                go_authors_supplier = {'name': 'The Go Authors', 'url': ['https://go.dev']}
 
-            spdx['creationInfo']['creators'] = [
-                c for c in spdx['creationInfo']['creators'] if not c.startswith('Organization:')
-            ] + ['Organization: VyOS maintainers and contributors (maintainers@vyos.io)']
+                cdx['metadata']['authors'] = [vyos_author]
+                cdx['metadata']['supplier'] = vyos_supplier
 
-            spdx['documentNamespace'] = 'https://vyos.io/sbom/' + spdx['documentNamespace'].rsplit('/', 1)[-1]
-            for pkg in spdx['packages']:
-                if pkg.get('SPDXID', '').startswith('SPDXRef-DocumentRoot-'):
-                    pkg['supplier'] = 'Organization: VyOS Networks (' + build_defaults['website_url'] + ')'
-                    pkg['primaryPackagePurpose'] = 'OPERATING-SYSTEM'
+                cdx['metadata']['lifecycles'] = [{'phase': 'build'}]
+                cdx['metadata']['licenses'] = [{'license': {'id': 'CC0-1.0'}}]
 
-            with open(spdx_file, 'w') as f:
-                json.dump(spdx, f)
+                cdx['metadata']['component']['type'] = 'operating-system'
+                cdx['metadata']['component']['supplier'] = vyos_supplier
 
-            print("I: Finished SBOM generation")
-        finally:
-            # remove temporary unpacked squashfs, even on failure/interruption
-            shutil.rmtree(syft_target_dir, ignore_errors=True)
+                # Add the correct component.supplier field.
+                for comp in cdx['components']:
+                    supplier = component_supplier(comp, vyos_supplier, go_authors_supplier)
+                    if supplier:
+                        comp['supplier'] = supplier
+
+                with open(cdx_file, 'w') as f:
+                    json.dump(cdx, f)
+
+                spdx_file = f'{base_filename}.spdx.json'
+                with open(spdx_file) as f:
+                    spdx = json.load(f)
+
+                spdx['creationInfo']['creators'] = [
+                    c for c in spdx['creationInfo']['creators'] if not c.startswith('Organization:')
+                ] + ['Organization: VyOS maintainers and contributors (maintainers@vyos.io)']
+
+                spdx['documentNamespace'] = 'https://vyos.io/sbom/' + spdx['documentNamespace'].rsplit('/', 1)[-1]
+                for pkg in spdx['packages']:
+                    if pkg.get('SPDXID', '').startswith('SPDXRef-DocumentRoot-'):
+                        pkg['supplier'] = 'Organization: VyOS Networks (' + build_defaults['website_url'] + ')'
+                        pkg['primaryPackagePurpose'] = 'OPERATING-SYSTEM'
+
+                with open(spdx_file, 'w') as f:
+                    json.dump(spdx, f)
+
+                print("I: Finished SBOM generation")
+            finally:
+                # remove temporary unpacked squashfs, even on failure/interruption
+                shutil.rmtree(syft_target_dir, ignore_errors=True)
 
 
     # If the flavor has `image_format = "iso"`, then the work is done.
