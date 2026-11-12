@@ -1,0 +1,25 @@
+From: Agent <agent@example.invalid>
+Subject: [PATCH] skip 30-test_afalg.t when kernel AF_ALG interface is unavailable
+
+The afalgtest binary requires an AF_ALG socket, which the emulated
+mips64el build environment (qemu container) does not provide. Skip the
+test instead of failing the whole suite; other tests are unaffected.
+---
+ test/recipes/30-test_afalg.t | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/test/recipes/30-test_afalg.t b/test/recipes/30-test_afalg.t
+--- a/test/recipes/30-test_afalg.t
++++ b/test/recipes/30-test_afalg.t
+@@ -16,6 +16,11 @@ use OpenSSL::Test::Utils;
+ plan skip_all => "$test_name not supported for this build"
+     if disabled("afalgeng");
+
++# The kernel AF_ALG interface is missing in emulated build
++# environments (qemu container); skip instead of failing.
++plan skip_all => "kernel AF_ALG interface not available"
++    unless socket(my $algsock, 38, 1, 0);  # 38=AF_ALG, 1=SOCK_STREAM
++
+ plan tests => 1;
+
+ ok(run(test(["afalgtest"])), "running afalgtest");
