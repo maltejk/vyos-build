@@ -1,0 +1,11 @@
+--- a/src/libstrongswan/utils/identification.c
++++ b/src/libstrongswan/utils/identification.c
+@@ -410,7 +410,7 @@
+ 	}
+ 	if (empty)
+ 	{
+-		snprintf(buf, len, "");
++		snprintf(buf, len, "%s", "");
+ 	}
+ 	else if (!finished)
+ 	{
