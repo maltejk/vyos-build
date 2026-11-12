@@ -16,8 +16,14 @@ echo "I: Regenerating initramfs before restoring file capabilities"
 update-initramfs -k all -t -u || exit 1
 touch /initrd.img_has_already_been_regenerated
 
-# mkinitramfs ignores modprobe failures - without squashfs the image is unbootable
+# mkinitramfs ignores modprobe failures - without squashfs the image is unbootable.
+# A kernel with CONFIG_SQUASHFS=y has no squashfs.ko module; the check only
+# applies when squashfs is a module (srxslot boots with built-in squashfs and
+# no initramfs at all).
 for initrd in /boot/initrd.img-*; do
+    if grep -q '^CONFIG_SQUASHFS=y' /boot/config-* 2>/dev/null; then
+        continue
+    fi
     if ! lsinitramfs $initrd | grep -q '/squashfs\.ko'; then
         echo "E: $initrd contains no squashfs module!"
         exit 1
