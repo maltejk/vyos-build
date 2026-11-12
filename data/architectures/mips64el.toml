@@ -1,0 +1,10 @@
+# Packages included in mips64el images by default
+packages = []
+bootloaders = ""
+squashfs_compression_type = "xz -b 256k -always-use-fragments -no-recovery"
+
+# debian_mirror may be overridden here (Debian trixie dropped mips64el;
+# point this at a mirror still carrying it, e.g. a bookworm snapshot).
+
+[boot_settings]
+  console_type = "ttyS"

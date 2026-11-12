@@ -238,7 +238,7 @@ def build():
     # Options dict format:
     # '$option_name_without_leading_dashes': { ('$help_string', $default_value_generator_thunk, $value_checker_thunk) }
     options = {
-       'architecture': ('Image target architecture (amd64 or arm64)', lambda x: x in ['amd64', 'arm64', None]),
+       'architecture': ('Image target architecture (amd64, arm64 or mips64el)', lambda x: x in ['amd64', 'arm64', 'mips64el', None]),
        'build-by': ('Builder identifier (e.g. jrandomhacker@example.net)', None),
        'debian-mirror': ('Debian repository mirror', None),
        'debian-security-mirror': ('Debian security updates mirror', None),
