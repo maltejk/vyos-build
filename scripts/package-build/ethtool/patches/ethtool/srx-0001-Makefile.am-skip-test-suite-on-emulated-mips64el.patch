@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: SRX build agent <agent@vyos-srx.invalid>
+Date: Sat, 1 Nov 2026 20:15:00 +0000
+Subject: [PATCH] Makefile.am: skip test suite on emulated mips64el
+
+The test suite (test-cmdline, test-features) drives the built ethtool
+binary against real network device names ("devname"). The mips64el
+package build runs under qemu-user in Docker with no netdevs, so every
+test returns 1 and aborts the build. Skip the test suite.
+
+Note: the patch must modify an upstream source file, not debian/rules:
+dpkg-source -b copies the source tree's debian/ (already patched by
+--before-build) into its temp dir before applying the patch list, so a
+debian/-touching patch gets double-applied ("Reversed patch detected").
+---
+ Makefile.am | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/Makefile.am b/Makefile.am
+index 5a61a9a..19f9db9 100644
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -70,3 +70,10 @@ endif
+ dist-hook:
+ 	cp $(top_srcdir)/ethtool.spec $(distdir)
+ 
++
++# The test suite (test-cmdline, test-features) drives the built ethtool
++# binary against real network device names ("devname"). The mips64el
++# package build runs under qemu-user in Docker with no netdevs, so every
++# test returns 1 and aborts the build. Skip the test suite.
++TESTS =
++check_PROGRAMS =
+-- 
+2.39.5
+
