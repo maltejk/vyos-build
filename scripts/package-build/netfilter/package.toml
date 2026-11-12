@@ -8,11 +8,10 @@ name = "pkg-nftables"
 commit_id = "debian/1.0.9-1"
 scm_url = "https://salsa.debian.org/pkg-netfilter-team/pkg-nftables.git"
 
-build_cmd = """
-sudo dpkg -i ../libnftnl*.deb
-sudo mk-build-deps --install --tool 'apt-get --yes --no-install-recommends'
-dpkg-buildpackage -uc -us -tc -b
-"""
+# Install locally-built libnftnl before build.py's generic mk-build-deps step:
+# debian/control requires libnftnl-dev (>= 1.2.6), the repo only ships 1.2.4.
+pre_build_hook = "sudo dpkg -i ../libnftnl*.deb"
+build_cmd = "dpkg-buildpackage -uc -us -tc -b"
 
 [dependencies]
 packages = [
