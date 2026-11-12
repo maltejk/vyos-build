@@ -2,6 +2,13 @@
 
 echo I: Create initramfs if it does not exist.
 
+# srxslot flavors boot without an initramfs (built-in squashfs); the marker comes
+# from the flavor. Generating one costs minutes under qemu-user.
+if [ -e /etc/vyos-srx-no-initrd ]; then
+    echo "I: /etc/vyos-srx-no-initrd present, skipping initramfs"
+    exit 0
+fi
+
 # Kernel complains about non available nls_ascii module when booting from USB pendrive
 echo "nls_ascii" >> /etc/initramfs-tools/modules
 
