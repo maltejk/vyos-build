@@ -1,0 +1,36 @@
+From 675cbfc7ec577825160bfc96ecaf8e66dc32eeb3 Mon Sep 17 00:00:00 2001
+From: Agent <agent@vyos-srx.dev>
+Date: Mon, 2 Nov 2026 21:43:26 +0000
+Subject: [PATCH] libnss-tacplus postinst: do not add tacplus to group line
+
+Under qemu-user mips64el emulation the tacplus group NSS path SIGBUSes
+on any successful group lookup, breaking tar/chgrp during package
+configure in the SRX image build. TACACS+ group mapping is unused on
+SRX; the passwd entry is kept (mapped-user lookups work).
+---
+ debian/libnss-tacplus.postinst | 9 +++++++--
+ 1 file changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/debian/libnss-tacplus.postinst b/debian/libnss-tacplus.postinst
+index 06253d7..af6ee3b 100644
+--- a/debian/libnss-tacplus.postinst
++++ b/debian/libnss-tacplus.postinst
+@@ -13,8 +13,13 @@ case "$1" in
+         if [ -e "/etc/nsswitch.conf" ]; then
+             sed -i -E -e '/tacplus\s/b' \
+                 -e '/^passwd:/s/(compat|files)/tacplus &/' /etc/nsswitch.conf
+-            sed -i -E -e '/tacplus\s/b' \
+-                -e '/^group:/s/(compat|files)/tacplus &/' /etc/nsswitch.conf
++            # SRX: do not add tacplus to the group line. Under qemu-user
++            # mips64el emulation the tacplus group NSS path SIGBUSes on any
++            # successful group lookup (breaks tar/chgrp during package
++            # configure in the image build); TACACS+ group mapping is unused
++            # on SRX.
++            # sed -i -E -e '/tacplus\s/b' \
++            #     -e '/^group:/s/(compat|files)/tacplus &/' /etc/nsswitch.conf
+         fi
+     ;;
+ 
+-- 
+2.53.0
+
