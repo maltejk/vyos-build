@@ -1,0 +1,39 @@
+From eaae71f72999eb74cdde67c86b4685fac80d15d8 Mon Sep 17 00:00:00 2001
+From: Agent <agent@vyos-srx.dev>
+Date: Thu, 5 Nov 2026 05:40:26 +0000
+Subject: [PATCH] usr/nl/stats: skip JSTAT_PADDING attributes
+
+The kernel builds the stats response with nla_put_u64_64bit(..., JSTAT_PADDING).
+On architectures without CONFIG_HAVE_EFFICIENT_UNALIGNED_ACCESS (eg. MIPS)
+this inserts a zero-length pad attribute of type JSTAT_PADDING before every
+u64 that would otherwise be misaligned. stats_query_response() treated it
+as an unknown stat (JSTAT_MAX == JSTAT_PADDING), so 'jool stats display'
+printed an extra '????: 0' line before each stat plus an 'Unknown stat'
+warning on stderr. amd64 never emits pads, so it is not seen there.
+
+Skip pad attributes before they are recorded or reported.
+---
+ src/usr/nl/stats.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/src/usr/nl/stats.c b/src/usr/nl/stats.c
+index 857a1d5..2f6a7d4 100644
+--- a/src/usr/nl/stats.c
++++ b/src/usr/nl/stats.c
+@@ -176,6 +176,13 @@ static struct jool_result stats_query_response(struct nl_msg *response,
+ 	len = genlmsg_attrlen(ghdr, sizeof(struct joolnlhdr));
+ 
+ 	nla_for_each_attr(attr, head, len, rem) {
++		/*
++		 * nla_put_u64_64bit() emits a JSTAT_PADDING attribute before
++		 * each u64 on architectures without efficient unaligned access
++		 * (eg. MIPS). It is not a stat.
++		 */
++		if (nla_type(attr) == JSTAT_PADDING)
++			continue;
+ 		qargs->last = nla_type(attr);
+ 		if (qargs->last < 1 || JSTAT_MAX <= qargs->last) {
+ 			warn_unknown_stat(response);
+-- 
+2.53.0
+
