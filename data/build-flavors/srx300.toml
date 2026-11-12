@@ -1,0 +1,35 @@
+# SRX (mips64el) slot image for the Juniper SRX300 family.
+# Built by the SRX CI with the own kernel and the vyos-srx-platform deb from
+# the SRX apt repository. The output is an srxslot tarball packed by
+# scripts/image-build/hooks/srxslot.sh (squashfs + kernel + MANIFEST), not an
+# ISO: SRXBOOT boots U-Boot -> shim -> kernel and installs slots from the
+# tarball, there is no GRUB/live-boot.
+
+image_format = "srxslot"
+artifact_format = ["tar"]
+
+# The SRX kernel is built out-of-tree and published as linux-image-<ver>-srx
+# in the SRX apt repository; update kernel_version when the kernel changes.
+kernel_flavor = "srx"
+kernel_version = "6.18.60"
+
+squashfs_compression_type = "xz -b 256k -always-use-fragments -no-recovery"
+
+packages = ["vyos-srx-platform", "linux-image-6.18.60-srx"]
+
+[boot_settings]
+  console_type = "ttyS"
+  console_speed = "9600"
+
+# SRX CI apt repository (ci/repo.sh, codename rolling so the upstream
+# vyos-dev.pref.chroot pin 999 applies) with the SRX kernel, the
+# vyos-srx-platform deb and the CI-built packages for mips64el. ci/image.sh
+# publishes it via nginx on the runner (/ci-repo/) before the build. The key is the repo signing pubkey;
+# live-build installs <name>.key.chroot into the chroot apt keyring.
+[additional_repositories.srx]
+  url = "http://vyos-srx.spacetechnology.net/ci-repo"
+  distribution = "rolling"
+  architecture = "mips64el"
+  components = "main"
+  no_source = true
+  key = "mDMEasiZ/xYJKwYBBAHaRw8BAQdA7rCMXF3tf4tt/qlk8DxAnCncowCG13HkE6KjqKVeOHy0J1NSWCBWeU9TIFBvcnQgUmVwbyA8c3J4LXJlcG9AbG9jYWxob3N0PoiQBBMWCgA4FiEEd4W2deXf0rBUsOdhHDFXKjF8w0wFAmrImf8CGwMFCwkIBwIGFQoJCAsCBBYCAwECHgECF4AACgkQHDFXKjF8w0ypNQD/T/DobVYqdg+eCLvmI0Y3mUklLm+fnAeCUxHDlM9MYN0A/3kJhfqu7p3iNS0IQt2MJAlPRtW0xLpNj3r+GFrNoz8M"
