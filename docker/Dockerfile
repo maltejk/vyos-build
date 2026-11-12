@@ -256,8 +256,7 @@ RUN echo "export PATH=/opt/go/bin:$PATH" >> /etc/bash.bashrc
 # Packages needed for QEMU test-suite
 RUN apt-get update && apt-get install -y \
         python3-pexpect \
-        qemu-utils \
-        qemu-kvm
+        qemu-utils
 
 # Packages for amd64 platforms
 RUN if dpkg-architecture -iamd64; then \
