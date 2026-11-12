@@ -2,6 +2,11 @@
 CWD=$(pwd)
 set -e
 
+# The builder image installs Go to /opt/go, which is not in the PATH of
+# non-login shells (only /etc/bash.bashrc gets it); export it here so
+# 'go build' works when build.py runs this via sh.
+export PATH=/opt/go/bin:$PATH
+
 BUILD_ARCH=$(dpkg-architecture -qDEB_TARGET_ARCH)
 
 SRC="blackbox_exporter"
