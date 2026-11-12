@@ -1,0 +1,70 @@
+diff --git a/functions/packages.sh b/functions/packages.sh
+index a6c2c1e8d..305168c6d 100755
+--- a/functions/packages.sh
++++ b/functions/packages.sh
+@@ -36,6 +36,28 @@ Check_package ()
+ 	fi
+ }
+ 
++# Save_package_info FILE
++# FILE holds "name<TAB>label" lines. Appends "url suite label" (url/suite of the
++# first repo line after the installed version in apt-cache policy) to
++# chroot.packages.all.info. One chroot call for all packages; a call per
++# package is very slow under qemu-user. "@INST@" in a label becomes the
++# installed version.
++Save_package_info ()
++{
++	Chroot chroot "apt-cache policy $(cut -f1 "${1}" | tr '\n' ' ')" | awk '
++		FNR == NR {
++			n = index($0, "\t"); k = substr($0, 1, n - 1); lab[k] = substr($0, n + 1)
++			sub(/:[^:]*$/, "", k); if (!(k in lab)) lab[k] = substr($0, n + 1)   # apt prints native arch unqualified
++			next
++		}
++		/^[^ ]/ { pkg = $0; sub(/:$/, "", pkg); star = 0; done = 0; inst = ""; next }
++		$1 == "Installed:" { inst = $2 }
++		/\*\*\*/ { star = 1 }
++		star && !done && /https?:/ && (pkg in lab) {
++			l = lab[pkg]; gsub(/@INST@/, inst, l); print $2 " " $3 " " l; done = 1
++		}' "${1}" - >> chroot.packages.all.info
++}
++
+ # Note, reads from _LB_PACKAGES
+ Install_packages ()
+ {
+@@ -61,13 +83,12 @@ Install_packages ()
+ 			;;
+ 	esac
+ 
+-  # save information about all temporary installed packages and source repos
++	# save information about all temporary installed packages and source repos
+ 	for PACKAGE in ${_LB_PACKAGES}; do
+-		INSTALLED_VERSION=$(Chroot chroot "apt-cache policy ${PACKAGE}" | grep 'Installed:' | awk '{print $2}')
+-		Chroot chroot "apt-cache policy ${PACKAGE}"  | sed -n '/\*\*\*/,$p' | grep -P 'http:|https:' -m 1 | \
+-		awk -v pkg="${PACKAGE}" -v version="${INSTALLED_VERSION}" '{print $2" "$3" "pkg" "version}' >> chroot.packages.all.info
+-
+-	done
++		printf '%s\t%s @INST@\n' "${PACKAGE}" "${PACKAGE}"
++	done > chroot.packages.tmp
++	Save_package_info chroot.packages.tmp
++	rm -f chroot.packages.tmp
+ 
+ 	unset _LB_PACKAGES # Can clear this now
+ }
+diff --git a/scripts/build/chroot b/scripts/build/chroot
+index 700762e78..83f677e66 100755
+--- a/scripts/build/chroot
++++ b/scripts/build/chroot
+@@ -49,10 +49,9 @@ for _PASS in install live; do
+ done
+ 
+ # save information about all installed packages and source repos
+-Chroot chroot "dpkg-query -W" | while read PACKAGE; do
+-  Chroot chroot "apt-cache policy ${PACKAGE}"  | sed -n '/\*\*\*/,$p' | grep -P 'http:|https:' -m 1 | awk -v pkg="${PACKAGE}" '{print $2" "$3" "pkg}' >> chroot.packages.all.info
+-done
+-
++Chroot chroot "dpkg-query -W" | awk -F'\t' '{ print $1 "\t" $0 }' > chroot.packages.tmp
++Save_package_info chroot.packages.tmp
++rm -f chroot.packages.tmp
+ 
+ lb chroot_includes_after_packages "${@}"
+ lb chroot_hooks "${@}"
