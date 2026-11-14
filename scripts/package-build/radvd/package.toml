@@ -24,6 +24,7 @@ fpm --input-type dir --output-type deb --name radvd \
 
 [dependencies]
 packages = [
+    "libbsd-dev",
     "bison",
     "flex"
 ]
