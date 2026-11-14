@@ -26,3 +26,10 @@ sed -i '/usr\/share\/doc\/kea/d' debian/*.install
 echo "usr/share/doc/kea/*" >> debian/not-installed
 echo "usr/share/kea/meson-info/*" >> debian/not-installed
 rm -rf debian/isc-kea-doc.install debian/isc-kea-subscriber* debian/isc-kea-premium*
+
+# Cross build (DEB_HOST_ARCH differs from the build arch): rules runs a plain
+# `meson setup build`; add the image's cross file and the multiarch libdir
+# (the native default applies to native builds only).
+if [ "$(dpkg-architecture -qDEB_HOST_ARCH)" != "$(dpkg --print-architecture)" ]; then
+    sed -i "s#meson setup build#& --cross-file $(dpkg-architecture -qDEB_HOST_ARCH) --libdir lib/$(dpkg-architecture -qDEB_HOST_MULTIARCH)#" debian/rules
+fi
