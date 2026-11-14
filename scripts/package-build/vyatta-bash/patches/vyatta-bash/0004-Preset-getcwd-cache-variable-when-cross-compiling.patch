@@ -1,0 +1,27 @@
+From 49cc4067a5c3114f89a9239f5d8c73ff661e4fb1 Mon Sep 17 00:00:00 2001
+From: Agent <agent@vyos-srx.dev>
+Date: Sat, 14 Nov 2026 21:38:43 +0000
+Subject: [PATCH] Preset getcwd cache variable when cross compiling
+
+---
+ debian/rules | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/debian/rules b/debian/rules
+index fb26884..02a9290 100755
+--- a/debian/rules
++++ b/debian/rules
+@@ -78,6 +78,10 @@ ifeq ($(DEB_BUILD_GNU_TYPE), $(DEB_HOST_GNU_TYPE))
+     conf_args += --build $(DEB_HOST_GNU_TYPE)
+ else
+     conf_args += --build $(DEB_BUILD_GNU_TYPE) --host $(DEB_HOST_GNU_TYPE)
++    # configure cannot run its getcwd() test when cross compiling and assumes
++    # GETCWD_BROKEN, which selects bash's own getcwd that fails on overlayfs;
++    # glibc's getcwd allocates.
++    export bash_cv_getcwd_malloc = yes
+ endif
+ 
+ #build: bash-build static-build check
+-- 
+2.53.0
+
