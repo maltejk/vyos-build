@@ -5,3 +5,8 @@ cat <<EOF >etc/default/locale
 LANG=en_US.UTF-8
 LC_ALL=C
 EOF
+
+# LANG=en_US.UTF-8 must exist, otherwise perl and others warn and fall back to C;
+# generated before 90-localepurge, which keeps en_US.UTF-8
+echo "en_US.UTF-8 UTF-8" > /etc/locale.gen
+locale-gen
