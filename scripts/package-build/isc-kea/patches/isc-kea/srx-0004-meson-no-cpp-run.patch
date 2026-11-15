@@ -1,0 +1,332 @@
+From: VyOS SRX build <noreply@localhost>
+Subject: meson: configure checks without running target binaries
+
+meson.build ran ~20 small test programs with cpp.run(). A cross build can only
+execute them through an exe_wrapper (qemu-user or binfmt), which is slow, needs
+privileges and is unavailable in unprivileged build containers.
+
+Turn them into link/compile checks (cpp.links, cpp.compiles) or preprocessor
+defines (cpp.get_define); every probe only reported success of compiling or
+linking, or printed a version macro. The ClusterFuzzLite probe tested the
+environment at run time: test it at configure time instead. Do not fetch the
+googletest wrap unless tests or fuzzing are enabled.
+
+Native builds get the same results.
+
+--- a/meson.build
++++ b/meson.build
+@@ -300,7 +300,7 @@
+ # Google Test
+ GTEST_DEP = dependency(
+     'gtest',
+-    fallback: ['gtest', 'gtest_dep'],
++    allow_fallback: FUZZ_OPT.enabled() or TESTS_OPT.enabled(),
+     required: FUZZ_OPT.enabled() or TESTS_OPT.enabled(),
+ )
+ 
+@@ -363,14 +363,11 @@
+ 
+ #### Compiler Checks
+ 
+-# The required keyword in cpp.run() is an 1.5.0 feature.
+-result = cpp.run(
+-    fs.read('compiler-checks/get-cpp-standard.cc'),
+-    name: 'Get cpp standard',
+-)
+-if result.returncode() == 0
+-    cpp_standard = result.stdout().strip()
+-else
++# Running a test program needs an exe_wrapper (qemu) when cross compiling, so
++# the checks below only compile/link or read preprocessor defines: same result
++# on native and cross builds, no target binary is executed.
++cpp_standard = cpp.get_define('__cplusplus').strip('L')
++if cpp_standard == ''
+     error('C++ standard is unknown')
+ endif
+ message(f'Detected C++ standard (__cplusplus value) is @cpp_standard@.')
+@@ -390,12 +387,11 @@
+     error('\n'.join(msgs))
+ endif
+ if cpp_standard.version_compare('<201400')
+-    result = cpp.run(
++    if not cpp.links(
+         fs.read('compiler-checks/boost-math-cpp14.cc'),
+         name: 'BOOST_MATH_REQUIRES_CPP14',
+         dependencies: [boost_dep, threads_dep],
+     )
+-    if result.returncode() != 0
+         msgs = ['Boost Math requires at least C++14.']
+         if cpp_std_opt == 'none'
+             msgs += no_cpp_std_opt_msg
+@@ -430,102 +426,108 @@
+     error('\n'.join(msgs))
+ endif
+ 
+-result = cpp.run(
++if not cpp.links(
+     fs.read('compiler-checks/boost-has-threads.cc'),
+     dependencies: [boost_dep, threads_dep],
+     name: 'BOOST_HAS_THREADS',
+ )
+-if result.returncode() != 0
+     error('boost is not configured to use threads')
+ endif
+ 
+ if cpp.has_header('boost/regex.h', dependencies: [boost_dep], required: false)
+-    result = cpp.run(
++    if not cpp.links(
+         fs.read('compiler-checks/boost-regex.cc'),
+         dependencies: [boost_dep, threads_dep],
+         name: 'GET_SYSTEM_VS_BOOST_REGEX_HEADER',
+     )
+-    if result.returncode() != 0
+         error('boost/regex.h is used in place of system regex.h')
+     endif
+ endif
+ 
+-result = cpp.run(
+-    fs.read('compiler-checks/chrono-same-duration.cc'),
+-    name: 'CHRONO_SAME_DURATION',
++# compiler-checks/chrono-same-duration.cc as a compile-time check
++conf_data.set(
++    'CHRONO_SAME_DURATION',
++    cpp.compiles(
++        '''#include <chrono>
++#include <type_traits>
++static_assert(std::is_same<std::chrono::system_clock::duration,
++                           std::chrono::steady_clock::duration>::value, "");
++int main() { return 0; }''',
++        name: 'CHRONO_SAME_DURATION',
++    ),
+ )
+-conf_data.set('CHRONO_SAME_DURATION', result.returncode() == 0)
+ 
+ if CRYPTO_DEP.name() == openssl.name()
+-    result1 = cpp.run(
++    result1 = cpp.links(
+         fs.read('compiler-checks/have-generic-tls-method.cc'),
+         name: 'HAVE_GENERIC_TLS_METHOD',
+         dependencies: [boost_dep, CRYPTO_DEP, threads_dep],
+     )
+-    result2 = cpp.run(
++    result2 = cpp.links(
+         fs.read('compiler-checks/stream-truncated-error.cc'),
+         name: 'HAVE_STREAM_TRUNCATED_ERROR',
+         dependencies: [boost_dep, CRYPTO_DEP, threads_dep],
+     )
+-    if result1.returncode() != 0 or result2.returncode() != 0
++    if not result1 or not result2
+         error('Boost TLS support broken.')
+     endif
+ endif
+ 
+ if CRYPTO_DEP.name() == botan.name()
+-    result = cpp.run(
++    if not cpp.links(
+         fs.read('compiler-checks/botan-hash.cc'),
+         name: 'CHECK_BOTAN_LIBRARY',
+         dependencies: [boost_dep, CRYPTO_DEP, threads_dep],
+     )
+-    if result.returncode() != 0
+         error('Botan library does not work.')
+     endif
+ endif
+ 
+-result = cpp.run(
+-    fs.read('compiler-checks/have-optreset.cc'),
+-    name: 'HAVE_OPTRESET',
++conf_data.set(
++    'HAVE_OPTRESET',
++    cpp.links(fs.read('compiler-checks/have-optreset.cc'), name: 'HAVE_OPTRESET'),
+ )
+-conf_data.set('HAVE_OPTRESET', result.returncode() == 0)
+-
+-result = cpp.run(fs.read('compiler-checks/have-sa-len.cc'), name: 'HAVE_SA_LEN')
+-conf_data.set('HAVE_SA_LEN', result.returncode() == 0)
+-
+-result = cpp.run(
+-    fs.read('compiler-checks/log4cplus-initializer.cc'),
+-    name: 'LOG4CPLUS_INITIALIZER_H',
+-    dependencies: [LOG4CPLUS_DEP],
++conf_data.set(
++    'HAVE_SA_LEN',
++    cpp.links(fs.read('compiler-checks/have-sa-len.cc'), name: 'HAVE_SA_LEN'),
++)
++conf_data.set(
++    'LOG4CPLUS_INITIALIZER_H',
++    cpp.links(
++        fs.read('compiler-checks/log4cplus-initializer.cc'),
++        name: 'LOG4CPLUS_INITIALIZER_H',
++        dependencies: [LOG4CPLUS_DEP],
++    ),
+ )
+-conf_data.set('LOG4CPLUS_INITIALIZER_H', result.returncode() == 0)
+ 
+ if MYSQL_DEP.found()
+-    result = cpp.run(
+-        fs.read('compiler-checks/mysql-my-bool.cc'),
+-        name: 'MYSQL_MY_BOOL',
+-        dependencies: [MYSQL_DEP],
++    conf_data.set(
++        'HAVE_MYSQL_MY_BOOL',
++        cpp.links(
++            fs.read('compiler-checks/mysql-my-bool.cc'),
++            name: 'MYSQL_MY_BOOL',
++            dependencies: [MYSQL_DEP],
++        ),
+     )
+-    conf_data.set('HAVE_MYSQL_MY_BOOL', result.returncode() == 0)
+-
+-    result = cpp.run(
+-        fs.read('compiler-checks/mysql-get-option.cc'),
+-        name: 'HAVE_MYSQL_GET_OPTION',
+-        dependencies: [MYSQL_DEP],
++    conf_data.set(
++        'HAVE_MYSQL_GET_OPTION',
++        cpp.links(
++            fs.read('compiler-checks/mysql-get-option.cc'),
++            name: 'HAVE_MYSQL_GET_OPTION',
++            dependencies: [MYSQL_DEP],
++        ),
+     )
+-    conf_data.set('HAVE_MYSQL_GET_OPTION', result.returncode() == 0)
+ endif
+ 
+-result = cpp.run(
+-    fs.read('compiler-checks/fuzzing-with-clusterfuzzlite.cc'),
+-    name: 'FUZZING_WITH_CLUSTERFUZZLITE',
+-)
+-FUZZING_WITH_CLUSTERFUZZLITE = result.returncode() == 0
++# The probe tested the environment at run time: do it at configure time.
++FUZZING_WITH_CLUSTERFUZZLITE = true
++foreach v : ['CIFUZZ', 'FUZZING_ENGINE', 'FUZZING_LANGUAGE']
++    if run_command(ENV, v, check: true).stdout().strip() == ''
++        FUZZING_WITH_CLUSTERFUZZLITE = false
++    endif
++endforeach
+ 
+-have_afl = false
+-result = cpp.run(fs.read('compiler-checks/have-afl.cc'), name: 'HAVE_AFL')
+-if result.returncode() == 0
+-    have_afl = true
+-endif
++have_afl = cpp.links(fs.read('compiler-checks/have-afl.cc'), name: 'HAVE_AFL')
+ conf_data.set('HAVE_AFL', have_afl)
+ 
+ if GTEST_DEP.found()
+@@ -534,22 +536,26 @@
+     if GTEST_DEP.type_name() == 'internal'
+         conf_data.set('HAVE_CREATE_UNIFIED_DIFF', true)
+     else
+-        result = cpp.run(
+-            fs.read('compiler-checks/have-create-unified-diff.cc'),
+-            name: 'HAVE_CREATE_UNIFIED_DIFF',
+-            dependencies: [GTEST_DEP],
++        conf_data.set(
++            'HAVE_CREATE_UNIFIED_DIFF',
++            cpp.links(
++                fs.read('compiler-checks/have-create-unified-diff.cc'),
++                name: 'HAVE_CREATE_UNIFIED_DIFF',
++                dependencies: [GTEST_DEP],
++            ),
+         )
+-        conf_data.set('HAVE_CREATE_UNIFIED_DIFF', result.returncode() == 0)
+     endif
+ endif
+ 
+ if KRB5_DEP.found()
+-    result = cpp.run(
+-        fs.read('compiler-checks/have-gss-str-to-oid.cc'),
+-        name: 'HAVE_GSS_STR_TO_OID',
+-        dependencies: [KRB5_DEP],
++    conf_data.set(
++        'HAVE_GSS_STR_TO_OID',
++        cpp.links(
++            fs.read('compiler-checks/have-gss-str-to-oid.cc'),
++            name: 'HAVE_GSS_STR_TO_OID',
++            dependencies: [KRB5_DEP],
++        ),
+     )
+-    conf_data.set('HAVE_GSS_STR_TO_OID', result.returncode() == 0)
+ endif
+ 
+ #### Other checks.
+@@ -762,29 +768,19 @@
+ report_conf_data.set('PYTHON_PATH', PYTHON.full_path())
+ report_conf_data.set('PYTHON_VERSION', PYTHON.version())
+ report_conf_data.set('PKGPYTHONDIR', PKGPYTHONDIR)
+-result = cpp.run(
+-    fs.read('compiler-checks/get-boost-version.cc'),
+-    dependencies: [boost_dep, threads_dep],
+-    name: 'Get Boost version',
+-)
+-if result.returncode() == 0
+-    report_conf_data.set('BOOST_VERSION', result.stdout().strip())
+-else
+-    report_conf_data.set('BOOST_VERSION', 'unknown version')
++version = cpp.get_define(
++    'BOOST_LIB_VERSION',
++    prefix: '#include <boost/version.hpp>',
++    dependencies: [boost_dep],
++).strip('"')
++if version == ''
++    version = 'unknown version'
+ endif
++report_conf_data.set('BOOST_VERSION', version)
+ if CRYPTO_DEP.name() == botan.name()
+     report_conf_data.set('CRYPTO_NAME', 'Botan')
+     report_conf_data.set('SPACES', '                ')
+-    result = cpp.run(
+-        fs.read('compiler-checks/get-botan-version.cc'),
+-        name: 'Get Botan version',
+-        dependencies: [CRYPTO_DEP],
+-    )
+-    if result.returncode() == 0
+-        version = result.stdout().strip()
+-    else
+-        version = botan.version()
+-    endif
++    version = botan.version()
+     if version == 'unknown'
+         version = 'unknown version'
+     endif
+@@ -792,14 +788,12 @@
+ elif CRYPTO_DEP.name() == openssl.name()
+     report_conf_data.set('CRYPTO_NAME', 'OpenSSL')
+     report_conf_data.set('SPACES', '              ')
+-    result = cpp.run(
+-        fs.read('compiler-checks/get-openssl-version.cc'),
+-        name: 'Get OpenSSL version',
++    version = cpp.get_define(
++        'OPENSSL_VERSION_TEXT',
++        prefix: '#include <openssl/opensslv.h>',
+         dependencies: [CRYPTO_DEP],
+-    )
+-    if result.returncode() == 0
+-        version = result.stdout().strip()
+-    else
++    ).strip('"')
++    if version == ''
+         version = openssl.version()
+     endif
+     if version == 'unknown'
+@@ -807,14 +801,12 @@
+     endif
+     report_conf_data.set('CRYPTO_VERSION', version)
+ endif
+-result = cpp.run(
+-    fs.read('compiler-checks/get-log4cplus-version.cc'),
+-    name: 'Get Log4cplus version',
++version = cpp.get_define(
++    'LOG4CPLUS_VERSION_STR',
++    prefix: '#include <log4cplus/version.h>',
+     dependencies: [LOG4CPLUS_DEP],
+-)
+-if result.returncode() == 0
+-    version = result.stdout().strip()
+-else
++).strip('"')
++if version == ''
+     version = log4cplus.version()
+ endif
+ if version == 'unknown'
