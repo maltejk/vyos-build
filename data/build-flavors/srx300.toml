@@ -16,7 +16,7 @@ kernel_version = "6.18.60"
 squashfs_compression_type = "xz -b 256k -always-use-fragments -no-recovery"
 
 # linux-perf: Debian perf userspace (upstream ships none, vs-pf7r)
- packages = ["vyos-srx-platform", "linux-image-6.18.60-srx", "linux-perf"]
+packages = ["vyos-srx-platform", "linux-image-6.18.60-srx", "linux-perf"]
 
 [boot_settings]
   console_type = "ttyS"
