@@ -268,6 +268,17 @@
 			clock-frequency = <0x186a0>;
 			phandle = <0x0d>;
 
+			tmp421@4c {
+				compatible = "ti,tmp421";
+				reg = <0x4c>;
+			};
+
+			rtc@68 {
+				compatible = "dallas,ds1337";
+				reg = <0x68>;
+				interrupt-parent = <0x02>;
+				interrupts = <0x11 0x08>;
+			};
 		};
 
 		i2c@1180000001200 {
