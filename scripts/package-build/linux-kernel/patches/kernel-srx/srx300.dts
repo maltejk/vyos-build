@@ -274,10 +274,8 @@
 			};
 
 			rtc@68 {
-				compatible = "dallas,ds1337";
+				compatible = "dallas,ds1672";
 				reg = <0x68>;
-				interrupt-parent = <0x02>;
-				interrupts = <0x11 0x08>;
 			};
 		};
 
